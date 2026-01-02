@@ -31,12 +31,18 @@ export class LLMService {
           messages: [
             {
               role: 'system',
-              content: `You are an expert English tutor. Evaluate the user's spoken English transcription. 
+              content: `You are an expert English tutor. Evaluate the user's spoken English transcription.
+              
+              IMPORTANT: The input text is raw ASR output (lowercase, no punctuation). 
+              - DO NOT criticize missing punctuation, capitalization, or sentence segmentation.
+              - Focus ONLY on vocabulary mistakes, wrong verb tenses, incorrect prepositions, or broken sentence structures.
+              - If the text is unintelligible or seems to be random words, mention that the pronunciation might need improvement.
+              
               Provide feedback in JSON format with the following keys:
               - score: (number 0-100)
-              - grammarIssues: (array of strings)
-              - pronunciationFeedback: (string, based on common issues for this transcription)
-              - correction: (string, the natural/correct version of what they said)
+              - grammarIssues: (array of strings, in Chinese. Ignore punctuation/casing issues.)
+              - pronunciationFeedback: (string, based on common issues for this transcription, in Chinese)
+              - correction: (string, the natural/correct version of what they said, with proper punctuation and capitalization)
               
               Keep feedback concise and helpful. Return ONLY the JSON object.`
             },
@@ -58,8 +64,17 @@ export class LLMService {
       const content = response.data.choices[0].message.content;
       return JSON.parse(content) as EvaluationResult;
     } catch (error: any) {
-      console.error('Error calling Tongyi Qianwen API:', error.response?.data || error.message);
-      return this.getMockResult(text, 'Error calling AI service.');
+      const errorMessage = error.message || '';
+      const isProxyIssue = errorMessage.includes('198.18.') || errorMessage.includes('ETIMEDOUT');
+
+      if (isProxyIssue) {
+        console.error('\n[Network Error] Possible Proxy/VPN Issue Detected');
+        console.error('The server is trying to connect to a Fake-IP (often used by Clash/VPNs) but failing.');
+        console.error('Action: Please TURN OFF your VPN/Proxy or configure it to bypass "aliyuncs.com".\n');
+      }
+
+      console.error('Error calling Tongyi Qianwen API:', error.response?.data || errorMessage);
+      return this.getMockResult(text, isProxyIssue ? 'Network Error: Check VPN/Proxy' : 'Error calling AI service.');
     }
   }
 
