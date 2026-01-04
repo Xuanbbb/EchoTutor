@@ -1,6 +1,1 @@
-torch
-torchaudio
-transformers
-librosa
-numpy
-scipy
+dashscope

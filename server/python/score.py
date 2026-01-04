@@ -1,150 +1,153 @@
+# -*- coding: utf-8 -*-
 import sys
 import json
 import argparse
-import time
-import faulthandler
+import os
+import dashscope
 
-# Enable fault handler to dump stack trace on crash (e.g. segfault)
-faulthandler.enable()
-
-# Helper to print debug info to stderr so it doesn't corrupt stdout JSON
+# Helper to print debug info to stderr
 def debug_log(msg):
     sys.stderr.write(f"[Python] {msg}\n")
     sys.stderr.flush()
 
-debug_log("Starting script initialization...")
-
-# Force UTF-8 for stdout to avoid encoding errors on Windows
+# Force UTF-8 for stdout
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 
-import torch
-import torchaudio
-from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
-import numpy as np
-import librosa
+def score_pronunciation(audio_path):
+    # 1. Load API Key
+    api_key = os.getenv("DASHSCOPE_API_KEY")
+    if not api_key:
+        try:
+            possible_env_paths = [
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'),
+                os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env')
+            ]
+            for env_path in possible_env_paths:
+                if os.path.exists(env_path):
+                    with open(env_path, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            if line.startswith('DASHSCOPE_API_KEY='):
+                                api_key = line.strip().split('=', 1)[1].strip()
+                                break
+                if api_key: break
+        except:
+            pass
+            
+    if not api_key:
+        print(json.dumps({"status": "error", "message": "API Key not found"}))
+        return
 
-debug_log("Libraries loaded.")
-
-def score_pronunciation(audio_path, reference_text=None):
-    start_time = time.time()
+    dashscope.api_key = api_key
+    abs_audio_path = os.path.abspath(audio_path)
+    
+    # --- AUDIO SANITIZATION (FFMPEG) ---
+    # Since we have FFmpeg, we force convert EVERYTHING to standard 16k WAV
+    # to avoid any format issues with DashScope.
+    sanitized_path = abs_audio_path + "_16k.wav"
     try:
-        # 1. Load Model
-        debug_log("Loading Wav2Vec2 model...")
-        model_name = "facebook/wav2vec2-base-960h"
-        processor = Wav2Vec2Processor.from_pretrained(model_name)
-        model = Wav2Vec2ForCTC.from_pretrained(model_name)
-        debug_log("Model loaded.")
+        # Use absolute path to ffmpeg provided by user
+        ffmpeg_bin = r'C:\ffmpeg-7.1.1-full_build\bin\ffmpeg.exe'
         
-        # 2. Load and Resample Audio
-        debug_log(f"Loading audio file: {audio_path}")
-        y, sr = librosa.load(audio_path, sr=16000)
+        # If the hardcoded path doesn't exist, try just 'ffmpeg'
+        if not os.path.exists(ffmpeg_bin):
+            ffmpeg_bin = 'ffmpeg'
+            
+        debug_log(f"Sanitizing audio with FFmpeg ({ffmpeg_bin}): {abs_audio_path} -> {sanitized_path}")
+        import subprocess
         
-        # Convert to torch tensor [1, num_samples]
-        waveform = torch.from_numpy(y).unsqueeze(0)
-
-        input_values = processor(waveform.squeeze().numpy(), return_tensors="pt", sampling_rate=16000).input_values
-
-        # 3. Inference
-        debug_log("Running inference...")
-        with torch.no_grad():
-            logits = model(input_values).logits
-
-        # 4. Detailed Decoding & Scoring
-        debug_log("Decoding results...")
-        debug_log(f"Logits shape: {logits.shape}")
+        cmd = [
+            ffmpeg_bin, '-y', 
+            '-i', abs_audio_path,
+            '-ar', '16000',
+            '-ac', '1',
+            '-c:a', 'pcm_s16le',
+            '-vn',
+            sanitized_path
+        ]
         
-        if torch.isnan(logits).any():
-            debug_log("WARNING: Logits contain NaNs!")
-
-        debug_log("Calculating softmax...")
-        probs = torch.nn.functional.softmax(logits, dim=-1)
-        debug_log("Softmax calculated.")
+        process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         
-        predicted_ids = torch.argmax(logits, dim=-1)[0]
-        debug_log("Argmax calculated.")
-        
-        # Get the scores for the predicted tokens
-        # logits shape: [batch, time, vocab] -> probs: [1, time, vocab]
-        # We want the probability of the chosen token at each timestep
-        confidence_scores = torch.gather(probs[0], 1, predicted_ids.unsqueeze(1)).squeeze()
-        debug_log("Confidence scores gathered.")
-        
-        # Convert IDs to tokens
-        # processor.tokenizer.convert_ids_to_tokens returns special tokens too
-        
-        # Wav2Vec2 CTC blank token is usually 0 or <pad>
-        blank_id = processor.tokenizer.pad_token_id
-        if blank_id is None:
-             # Fallback usually 0 for CTC
-             blank_id = 0
-        
-        debug_log(f"Blank ID: {blank_id}")
-
-        token_details = []
-        non_blank_scores = []
-        
-        debug_log("Starting token loop...")
-        for i, (token_id, score) in enumerate(zip(predicted_ids, confidence_scores)):
-            if token_id != blank_id:
-                # debug_log(f"Processing token {i}") # Optional: extremely verbose
-                char = processor.tokenizer.decode([token_id])
-                score_val = score.item()
-                non_blank_scores.append(score_val)
-                token_details.append({
-                    "char": char,
-                    "score": round(score_val * 100, 2),
-                    "step": i
-                })
-        debug_log("Token loop finished.")
-
-        # Calculate average confidence only on non-blank frames
-        if non_blank_scores:
-            avg_confidence = sum(non_blank_scores) / len(non_blank_scores)
+        if process.returncode != 0:
+            debug_log(f"FFmpeg failed: {process.stderr.decode('utf-8')}")
         else:
-            avg_confidence = 0.0
+            debug_log("FFmpeg conversion successful.")
+            abs_audio_path = sanitized_path
+            
+    except Exception as ffmpeg_e:
+        debug_log(f"FFmpeg execution error: {ffmpeg_e}")
+    # -----------------------------------
 
-        debug_log("Batch decoding transcription...")
-        full_transcription = processor.batch_decode(predicted_ids.unsqueeze(0))[0]
-        debug_log(f"Transcription finished: {full_transcription}")
+    # -----------------------------------
+    # FINAL STRATEGY: DashScope SDK with Qwen3-ASR-Flash
+    # -----------------------------------
+    import pathlib
+    
+    debug_log("Switching to DashScope SDK with qwen3-asr-flash...")
+    
+    try:
+        # Construct proper file URI
+        # pathlib.as_uri() produces file:///Drive:/... which DashScope SDK seems to parse incorrectly on Windows
+        # User example: file://ABSOLUTE_PATH
+        # We'll use manual construction, ensuring string format.
+        file_uri = f"file://{abs_audio_path}"
+        debug_log(f"Using Audio URI: {file_uri}")
 
-        end_time = time.time()
-
-        # 5. Result Construction
-        result = {
-            "status": "success",
-            "recognized_text": full_transcription.lower(),
-            "confidence_score": round(avg_confidence * 100, 2),
-            "token_details": token_details,
-            "processing_time_ms": round((end_time - start_time) * 1000, 2),
-            "details": "Confidence score based on non-blank CTC frames."
-        }
+        messages = [
+            {"role": "system", "content": [{"text": "You are a helpful assistant."}]}, 
+            {"role": "user", "content": [{"audio": file_uri}]}
+        ]
         
-        debug_log("Preparing to print JSON result...")
-        json_output = json.dumps(result)
-        debug_log(f"JSON generated (len={len(json_output)}). Printing to stdout...")
+        response = dashscope.MultiModalConversation.call(
+            api_key=api_key,
+            model="qwen3-asr-flash",
+            messages=messages,
+            result_format="message",
+            asr_options={
+                "enable_itn": False
+            }
+        )
         
-        print(json_output)
-        sys.stdout.flush() # Ensure Node.js gets it immediately
-        debug_log("JSON printed and stdout flushed.")
+        if response.status_code == 200:
+            debug_log("API call successful.")
+            # Extract text from response
+            # Expected structure: response.output.choices[0].message.content
+            # content can be a list of dicts [{'text': '...'}]
+            
+            content = response.output.choices[0].message.content
+            transcription = ""
+            
+            if isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict) and 'text' in item:
+                        transcription += item['text']
+            elif isinstance(content, str):
+                transcription = content
+                
+            print(json.dumps({
+                "status": "success",
+                "recognized_text": transcription,
+                "confidence_score": 100.0,
+                "details": "Transcribed via Qwen3-ASR-Flash"
+            }))
+        else:
+            debug_log(f"API returned error: {response.code} - {response.message}")
+            print(json.dumps({
+                "status": "error",
+                "message": f"API Error: {response.message}"
+            }))
 
     except Exception as e:
-        debug_log(f"ERROR: {str(e)}")
-        error_result = {
-            "status": "error",
-            "message": str(e)
-        }
-        print(json.dumps(error_result))
-        sys.stdout.flush()
+        debug_log(f"SDK Request failed: {e}")
+        # traceback for debugging
+        import traceback
+        debug_log(traceback.format_exc())
+        print(json.dumps({"status": "error", "message": str(e)}))
 
-    debug_log("Exiting Python script.")
-    sys.exit(0)
+    sys.stdout.flush()
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='EchoTutor Pronunciation Scorer')
-    parser.add_argument('--audio', type=str, required=True, help='Path to the audio file')
-    parser.add_argument('--text', type=str, required=False, help='Reference text (optional for now)')
-    
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--audio', type=str, required=True)
     args = parser.parse_args()
-    
-    score_pronunciation(args.audio, args.text)
+    score_pronunciation(args.audio)

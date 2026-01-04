@@ -54,8 +54,7 @@ export class ScoringService {
       // Assuming 'python' is in the PATH. You might need to configure this.
       const pythonProcess = spawn('python', [
         this.pythonScriptPath,
-        '--audio', audioPath,
-        '--text', text
+        '--audio', audioPath
       ]);
 
       let stdoutData = '';

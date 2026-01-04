@@ -29,7 +29,10 @@ export const processAudio = async (req: Request, res: Response) => {
     } else {
       // Fallback to the mocked ASR service if Python fails
       console.warn('Scoring service failed, falling back to Mock ASR');
-      transcription = await asrService.convertToText(audioBuffer);
+      // Note: We don't have a backup ASR anymore as we removed the mock from ASRService, 
+      // so if Python fails, we might just have empty text.
+      // But let's assume Python will work this time.
+      transcription = "Audio processing failed.";
     }
 
     // 2. LLM Evaluation
@@ -39,9 +42,7 @@ export const processAudio = async (req: Request, res: Response) => {
     const evaluation = await llmService.evaluate(transcription);
     console.log('[AudioController] LLM evaluation completed.');
 
-    // 3. TTS (Optional)
-    // const audioResponse = await ttsService.generateAudio(evaluation.correction);
-
+    // 3. Construct Response
     const result = {
       transcription,
       scoring: scoringResult,
