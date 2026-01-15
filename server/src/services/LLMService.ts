@@ -3,7 +3,7 @@ import axios from 'axios';
 export interface EvaluationResult {
   score: number;
   grammarIssues: string[];
-  pronunciationFeedback: string;
+  pronunciationFeedback: string[];
   correction: string;
 }
 
@@ -27,28 +27,38 @@ export class LLMService {
       const response = await axios.post(
         this.baseUrl,
         {
-          model: 'qwen-plus', // Or qwen-max, qwen-turbo
+          model: 'qwen3-vl-32b-instruct',
           messages: [
             {
               role: 'system',
-              content: `You are an expert English tutor. Evaluate the user's spoken English transcription.
+              content: [
+                {
+                  type: 'text',
+                  text: `You are an expert English tutor. Evaluate the user's spoken English transcription.
               
-              IMPORTANT: The input text is raw ASR output (lowercase, no punctuation). 
+              IMPORTANT: The input text is raw ASR output (lowercase, no punctuation).
               - DO NOT criticize missing punctuation, capitalization, or sentence segmentation.
               - Focus ONLY on vocabulary mistakes, wrong verb tenses, incorrect prepositions, or broken sentence structures.
               - If the text is unintelligible or seems to be random words, mention that the pronunciation might need improvement.
               
-              Provide feedback in JSON format with the following keys:
+              Provide feedback in JSON format with the following keys. IMPORTANT: ONLY return the JSON object, do not include any other text or formatting:
               - score: (number 0-100)
               - grammarIssues: (array of strings, in Chinese. Ignore punctuation/casing issues.)
-              - pronunciationFeedback: (string, based on common issues for this transcription, in Chinese)
+              - pronunciationFeedback: (array of strings, based on common issues for this transcription, in Chinese)
               - correction: (string, the natural/correct version of what they said, with proper punctuation and capitalization)
               
-              Keep feedback concise and helpful. Return ONLY the JSON object.`
+              Keep feedback concise and helpful.`
+                }
+              ]
             },
             {
               role: 'user',
-              content: `Transcription: "${text}"`
+              content: [
+                {
+                  type: 'text',
+                  text: `Transcription: "${text}"`
+                }
+              ]
             }
           ],
           response_format: { type: 'json_object' }
@@ -82,7 +92,7 @@ export class LLMService {
     return {
       score: 0,
       grammarIssues: [note],
-      pronunciationFeedback: "AI evaluation unavailable.",
+      pronunciationFeedback: ["AI evaluation unavailable."],
       correction: text
     };
   }

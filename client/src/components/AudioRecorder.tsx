@@ -5,8 +5,15 @@ import axios from 'axios';
 interface EvaluationResult {
   score: number;
   grammarIssues: string[];
-  pronunciationFeedback: string;
+  pronunciationFeedback: string[];
   correction: string;
+}
+
+interface ScoringResult {
+  pronunciation_score: number;
+  prosody_score: number;
+  details: string;
+  recognized_text: string;
 }
 
 const AudioRecorder = () => {
@@ -15,6 +22,7 @@ const AudioRecorder = () => {
 
   const [transcription, setTranscription] = useState<string>('');
   const [evaluation, setEvaluation] = useState<EvaluationResult | null>(null);
+  const [scoring, setScoring] = useState<ScoringResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
@@ -27,14 +35,22 @@ const AudioRecorder = () => {
 
   const processAudioData = async (audioData: Blob | File, fileName: string) => {
     setLoading(true);
+    setEvaluation(null);
+    setScoring(null);
+    setTranscription('');
+    
     try {
       const formData = new FormData();
       formData.append('audio', audioData, fileName);
+      // Optional: Add reference text if you have a UI for it
+      // formData.append('referenceText', "Hello world"); 
 
       const response = await axios.post('http://localhost:3000/api/process-audio', formData);
 
       setTranscription(response.data.transcription);
       setEvaluation(response.data.evaluation);
+      setScoring(response.data.scoring);
+      
     } catch (error: any) {
       console.error('Error submitting audio:', error);
       const errorMessage = error.response?.data?.error || error.message || 'Failed to process audio';
@@ -107,17 +123,39 @@ const AudioRecorder = () => {
         </div>
       )}
 
+      {scoring && (
+        <div style={{ marginTop: '20px', textAlign: 'left', borderTop: '1px solid #eee', paddingTop: '10px', backgroundColor: '#f9f9f9', padding: '10px' }}>
+          <h3>Pronunciation & Prosody Scores:</h3>
+          <div style={{ display: 'flex', gap: '20px' }}>
+             <div>
+                <strong>Pronunciation Score:</strong> <span style={{ fontSize: '1.2em', color: scoring.pronunciation_score > 80 ? 'green' : 'orange' }}>{scoring.pronunciation_score}</span>
+             </div>
+             <div>
+                <strong>Prosody Score:</strong> <span style={{ fontSize: '1.2em', color: scoring.prosody_score > 80 ? 'green' : 'orange' }}>{scoring.prosody_score}</span>
+             </div>
+          </div>
+        </div>
+      )}
+
       {evaluation && (
         <div style={{ marginTop: '20px', textAlign: 'left', borderTop: '1px solid #eee', paddingTop: '10px' }}>
-          <h3>Evaluation Result:</h3>
-          <p><strong>Score:</strong> {evaluation.score}</p>
-          <p><strong>Pronunciation:</strong> {evaluation.pronunciationFeedback}</p>
+          <h3>AI-Powered Feedback:</h3>
+          <p><strong>Overall Content Score:</strong> {evaluation.score}</p>
+
+          <p><strong>Pronunciation & Intonation:</strong></p>
+          <ul>
+            {evaluation.pronunciationFeedback.map((issue, idx) => (
+              <li key={idx}>{issue}</li>
+            ))}
+          </ul>
+
           <p><strong>Grammar:</strong></p>
           <ul>
             {evaluation.grammarIssues.map((issue, idx) => (
               <li key={idx}>{issue}</li>
             ))}
           </ul>
+          
           <p><strong>Correction:</strong> {evaluation.correction}</p>
         </div>
       )}
