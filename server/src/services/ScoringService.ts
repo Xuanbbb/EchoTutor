@@ -7,10 +7,13 @@ interface PronunciationResult {
   status: 'success' | 'error';
   recognized_text?: string;
   confidence_score?: number;
+  pronunciation_score?: number;
+  prosody_score?: number;
   token_details?: Array<{ char: string; score: number; step: number }>;
   processing_time_ms?: number;
   details?: string;
   message?: string;
+  raw_response?: string;
 }
 
 export class ScoringService {
@@ -52,10 +55,12 @@ export class ScoringService {
   private runPythonScript(audioPath: string, text: string): Promise<PronunciationResult> {
     return new Promise((resolve, reject) => {
       // Assuming 'python' is in the PATH. You might need to configure this.
-      const pythonProcess = spawn('python', [
-        this.pythonScriptPath,
-        '--audio', audioPath
-      ]);
+      const args = [this.pythonScriptPath, '--audio', audioPath];
+      if (text) {
+          args.push('--ref_text', text);
+      }
+
+      const pythonProcess = spawn('python', args);
 
       let stdoutData = '';
       let stderrData = '';

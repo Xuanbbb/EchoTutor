@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useReactMediaRecorder } from 'react-media-recorder';
 import axios from 'axios';
+import './AudioRecorder.css';
 
 interface EvaluationResult {
   score: number;
@@ -17,7 +18,7 @@ interface ScoringResult {
 }
 
 const AudioRecorder = () => {
-  const { status, startRecording, stopRecording, mediaBlobUrl, clearBlob } =
+  const { status, startRecording, stopRecording, mediaBlobUrl, clearBlobUrl } =
     useReactMediaRecorder({ audio: true });
 
   const [transcription, setTranscription] = useState<string>('');
@@ -38,7 +39,7 @@ const AudioRecorder = () => {
     setEvaluation(null);
     setScoring(null);
     setTranscription('');
-    
+
     try {
       const formData = new FormData();
       formData.append('audio', audioData, fileName);
@@ -50,7 +51,7 @@ const AudioRecorder = () => {
       setTranscription(response.data.transcription);
       setEvaluation(response.data.evaluation);
       setScoring(response.data.scoring);
-      
+
     } catch (error: any) {
       console.error('Error submitting audio:', error);
       const errorMessage = error.response?.data?.error || error.message || 'Failed to process audio';
@@ -72,91 +73,139 @@ const AudioRecorder = () => {
   };
 
   return (
-    <div style={{ padding: '20px', border: '1px solid #ccc', borderRadius: '8px' }}>
-      <h2>Oral Practice</h2>
-      
-      <div style={{ display: 'flex', gap: '20px', justifyContent: 'center', marginBottom: '30px' }}>
+    <div className="recorder-container">
+      <div className="recorder-header">
+        <h2>Oral Practice Studio</h2>
+      </div>
+
+      <div className="controls-section">
         {/* Recording Section */}
-        <div style={{ padding: '15px', border: '1px dashed #aaa', borderRadius: '8px', flex: 1 }}>
-          <h3>Record Audio</h3>
-          <p>Status: {status}</p>
-          <div style={{ marginBottom: '10px' }}>
-            <button onClick={startRecording} disabled={status === 'recording'}>
+        <div className="control-card">
+          <h3>🎙️ Record Audio</h3>
+          <span className={`status-label ${status === 'recording' ? 'recording' : ''}`}>
+            Status: {status.toUpperCase()}
+          </span>
+
+          <div className="button-group">
+            <button
+              className="btn-primary"
+              onClick={startRecording}
+              disabled={status === 'recording'}
+            >
               Start
             </button>
-            <button onClick={stopRecording} disabled={status !== 'recording'} style={{ marginLeft: '5px' }}>
+            <button
+              className="btn-secondary"
+              onClick={stopRecording}
+              disabled={status !== 'recording'}
+            >
               Stop
             </button>
-            <button onClick={clearBlob} disabled={!mediaBlobUrl} style={{ marginLeft: '5px' }}>
+            <button
+              className="btn-outline"
+              onClick={clearBlobUrl}
+              disabled={!mediaBlobUrl}
+            >
               Clear
             </button>
           </div>
+
           {mediaBlobUrl && (
-            <div>
-              <audio src={mediaBlobUrl} controls style={{ width: '100%' }} />
-              <button onClick={handleSubmitRecorded} disabled={loading} style={{ marginTop: '10px', width: '100%' }}>
-                {loading ? 'Processing...' : 'Evaluate Recording'}
+            <div className="player-wrapper">
+              <audio src={mediaBlobUrl} controls className="audio-player" />
+              <button
+                className="btn-accent"
+                onClick={handleSubmitRecorded}
+                disabled={loading}
+              >
+                {loading ? 'Processing...' : '✨ Evaluate Recording'}
               </button>
             </div>
           )}
         </div>
 
         {/* Upload Section */}
-        <div style={{ padding: '15px', border: '1px dashed #aaa', borderRadius: '8px', flex: 1 }}>
-          <h3>Upload Audio (Debug)</h3>
-          <input type="file" accept="audio/*" onChange={handleFileUpload} style={{ marginBottom: '10px' }} />
+        <div className="control-card">
+          <h3>📂 Upload File (Debug)</h3>
+          <div style={{ width: '100%', marginBottom: 'auto' }}>
+            <input
+              type="file"
+              accept="audio/*"
+              onChange={handleFileUpload}
+              className="file-input"
+            />
+          </div>
           {selectedFile && (
-            <div>
-              <p style={{ fontSize: '0.9em' }}>File: {selectedFile.name}</p>
-              <button onClick={handleSubmitUploaded} disabled={loading} style={{ width: '100%' }}>
-                {loading ? 'Processing...' : 'Evaluate Uploaded File'}
+            <div className="player-wrapper">
+              <p style={{ fontSize: '0.9em', color: '#666' }}>Selected: {selectedFile.name}</p>
+              <button
+                className="btn-accent"
+                onClick={handleSubmitUploaded}
+                disabled={loading}
+              >
+                {loading ? 'Processing...' : '✨ Evaluate File'}
               </button>
             </div>
           )}
         </div>
       </div>
 
-      {transcription && (
-        <div style={{ marginTop: '20px', textAlign: 'left' }}>
-          <h3>Transcription:</h3>
-          <p>{transcription}</p>
-        </div>
-      )}
+      {/* Results Display */}
+      {(transcription || evaluation || scoring) && (
+        <div className="feedback-section">
+          {transcription && (
+            <div className="transcription-box">
+              <strong>Transcription:</strong> "{transcription}"
+            </div>
+          )}
 
-      {scoring && (
-        <div style={{ marginTop: '20px', textAlign: 'left', borderTop: '1px solid #eee', paddingTop: '10px', backgroundColor: '#f9f9f9', padding: '10px' }}>
-          <h3>Pronunciation & Prosody Scores:</h3>
-          <div style={{ display: 'flex', gap: '20px' }}>
-             <div>
-                <strong>Pronunciation Score:</strong> <span style={{ fontSize: '1.2em', color: scoring.pronunciation_score > 80 ? 'green' : 'orange' }}>{scoring.pronunciation_score}</span>
-             </div>
-             <div>
-                <strong>Prosody Score:</strong> <span style={{ fontSize: '1.2em', color: scoring.prosody_score > 80 ? 'green' : 'orange' }}>{scoring.prosody_score}</span>
-             </div>
-          </div>
-        </div>
-      )}
+          {scoring && evaluation && (
+            <div className="scores-grid">
+              <div className="score-card pronunciation">
+                <span>Pronunciation</span>
+                <span className="score-value">{scoring.pronunciation_score}</span>
+              </div>
+              <div className="score-card prosody">
+                <span>Prosody</span>
+                <span className="score-value">{scoring.prosody_score}</span>
+              </div>
+              <div className="score-card overall">
+                <span>Overall</span>
+                <span className="score-value">{evaluation.score}</span>
+              </div>
+            </div>
+          )}
 
-      {evaluation && (
-        <div style={{ marginTop: '20px', textAlign: 'left', borderTop: '1px solid #eee', paddingTop: '10px' }}>
-          <h3>AI-Powered Feedback:</h3>
-          <p><strong>Overall Content Score:</strong> {evaluation.score}</p>
+          {evaluation && (
+            <div className="ai-feedback-container">
+              <h3>🤖 AI Feedback</h3>
 
-          <p><strong>Pronunciation & Intonation:</strong></p>
-          <ul>
-            {evaluation.pronunciationFeedback.map((issue, idx) => (
-              <li key={idx}>{issue}</li>
-            ))}
-          </ul>
+              <div className="feedback-category">
+                <h4>Pronunciation Advice</h4>
+                <ul className="feedback-list">
+                  {evaluation.pronunciationFeedback.map((issue, idx) => (
+                    <li key={idx}>{issue}</li>
+                  ))}
+                </ul>
+              </div>
 
-          <p><strong>Grammar:</strong></p>
-          <ul>
-            {evaluation.grammarIssues.map((issue, idx) => (
-              <li key={idx}>{issue}</li>
-            ))}
-          </ul>
-          
-          <p><strong>Correction:</strong> {evaluation.correction}</p>
+              <div className="feedback-category">
+                <h4>Grammar Check</h4>
+                <ul className="feedback-list">
+                  {evaluation.grammarIssues.map((issue, idx) => (
+                    <li key={idx}>{issue}</li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="feedback-category">
+                <h4>Better Expression</h4>
+                <div className="correction-box">
+                  {evaluation.correction}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

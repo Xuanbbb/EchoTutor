@@ -17,10 +17,11 @@ export const processAudio = async (req: Request, res: Response) => {
     }
 
     const audioBuffer = req.file.buffer;
+    const referenceText = req.body.referenceText || '';
 
     // 1. ASR & Pronunciation Assessment (via Python Sidecar)
     // We try to get the real text from our Python scoring engine first.
-    const scoringResult = await scoringService.assessPronunciation(audioBuffer);
+    const scoringResult = await scoringService.assessPronunciation(audioBuffer, referenceText);
     
     let transcription = '';
     

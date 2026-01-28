@@ -38,6 +38,7 @@ export class LLMService {
               
               IMPORTANT: The input text is raw ASR output (lowercase, no punctuation).
               - DO NOT criticize missing punctuation, capitalization, or sentence segmentation.
+              - Ignore spelling mistakes as they are likely ASR transcription errors.
               - Focus ONLY on vocabulary mistakes, wrong verb tenses, incorrect prepositions, or broken sentence structures.
               - If the text is unintelligible or seems to be random words, mention that the pronunciation might need improvement.
               
@@ -45,7 +46,7 @@ export class LLMService {
               - score: (number 0-100)
               - grammarIssues: (array of strings, in Chinese. Ignore punctuation/casing issues.)
               - pronunciationFeedback: (array of strings, based on common issues for this transcription, in Chinese)
-              - correction: (string, the natural/correct version of what they said, with proper punctuation and capitalization)
+              - correction: (string, the natural/correct version of what they said, MUST BE IN ENGLISH, with proper punctuation and capitalization)
               
               Keep feedback concise and helpful.`
                 }
