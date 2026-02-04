@@ -175,7 +175,7 @@ def score_pronunciation(audio_path, ref_text=""):
         ]
         
         response = dashscope.MultiModalConversation.call(
-            model="qwen-audio-turbo",
+            model="qwen3-omni-flash",
             messages=messages
         )
         
