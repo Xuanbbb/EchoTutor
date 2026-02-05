@@ -58,3 +58,28 @@ export const processAudio = async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Internal Server Error' });
   }
 };
+
+export const ttsGenerate = async (req: Request, res: Response) => {
+  try {
+    const { text } = req.body;
+    if (!text) {
+      return res.status(400).json({ error: 'Text is required for TTS generation.' });
+    }
+
+    console.log(`[AudioController] Generating TTS for text: "${text.substring(0, 50)}..."`);
+    const audioBuffer = await ttsService.generateAudio(text);
+
+    // Assuming DashScope TTS returns MP3. This might need adjustment.
+    res.set({
+      'Content-Type': 'audio/mpeg',
+      'Content-Disposition': `attachment; filename="tts_audio_${Date.now()}.mp3"`,
+      'Content-Length': audioBuffer.length,
+    });
+    res.send(audioBuffer);
+    console.log('[AudioController] TTS audio sent.');
+
+  } catch (error) {
+    console.error('Error generating TTS audio:', error);
+    res.status(500).json({ error: 'Internal Server Error during TTS generation.' });
+  }
+};

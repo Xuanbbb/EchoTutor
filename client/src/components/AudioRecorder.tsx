@@ -26,6 +26,7 @@ const AudioRecorder = () => {
   const [scoring, setScoring] = useState<ScoringResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [playingAudio, setPlayingAudio] = useState(false); // New state for playing audio
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -70,6 +71,44 @@ const AudioRecorder = () => {
   const handleSubmitUploaded = async () => {
     if (!selectedFile) return;
     await processAudioData(selectedFile, selectedFile.name);
+  };
+
+  const playCorrectionAudio = async (textToSpeak: string) => {
+    if (!textToSpeak || playingAudio) return;
+
+    setPlayingAudio(true);
+    let audioUrl: string | null = null;
+
+    try {
+      const response = await axios.post(
+        'http://localhost:3000/api/tts-generate',
+        { text: textToSpeak },
+        { responseType: 'arraybuffer' } // Important: receive as binary data
+      );
+
+      const audioBlob = new Blob([response.data], { type: 'audio/mpeg' }); // Assuming MP3
+      audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
+
+      await new Promise<void>((resolve) => {
+        audio.onended = () => {
+          resolve();
+        };
+        audio.play().catch(e => {
+          console.error("Error playing audio:", e);
+          resolve(); // Resolve even on error to unblock UI
+        });
+      });
+
+    } catch (error) {
+      console.error('Error fetching or playing TTS audio:', error);
+      alert('Failed to play correct pronunciation.');
+    } finally {
+      if (audioUrl) {
+        URL.revokeObjectURL(audioUrl); // Clean up the object URL
+      }
+      setPlayingAudio(false);
+    }
   };
 
   return (
@@ -199,7 +238,18 @@ const AudioRecorder = () => {
               </div>
 
               <div className="feedback-category">
-                <h4>Better Expression</h4>
+                <h4>Better Expression
+                  {evaluation.correction && (
+                    <button
+                      className="play-button"
+                      onClick={() => playCorrectionAudio(evaluation.correction)}
+                      disabled={playingAudio}
+                      title="Play correct pronunciation"
+                    >
+                      {playingAudio ? '🔊' : '▶️'}
+                    </button>
+                  )}
+                </h4>
                 <div className="correction-box">
                   {evaluation.correction}
                 </div>

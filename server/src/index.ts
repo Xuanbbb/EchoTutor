@@ -4,7 +4,7 @@ dotenv.config();
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import multer from 'multer';
-import { processAudio } from './controllers/AudioController';
+import { processAudio, ttsGenerate } from './controllers/AudioController';
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -22,6 +22,9 @@ app.get('/api/health', (req: Request, res: Response) => {
 
 // Audio processing route
 app.post('/api/process-audio', upload.single('audio'), processAudio);
+
+// TTS generation route
+app.post('/api/tts-generate', ttsGenerate);
 
 app.listen(port, () => {
   console.log(`[server]: Server is running at http://localhost:${port}`);

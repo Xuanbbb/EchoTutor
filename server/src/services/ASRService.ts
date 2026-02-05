@@ -47,8 +47,9 @@ export class ASRService {
       
       const formData = new FormData();
       formData.append('file', createReadStream(tempOutput));
-      formData.append('model', 'sensevoice-v1');
-      formData.append('language', 'en'); 
+      formData.append('model', 'qwen3-asr-flash');
+      formData.append('language', 'en');
+      formData.append('asr_options', JSON.stringify({ enable_itn: false })); 
 
       const response = await axios.post(this.baseUrl, formData, {
         headers: {
