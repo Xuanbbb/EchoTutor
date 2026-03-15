@@ -3,7 +3,7 @@ import path from 'path';
 import fs from 'fs/promises';
 import os from 'os';
 
-interface PronunciationResult {
+export interface PronunciationResult {
   status: 'success' | 'error';
   recognized_text?: string;
   confidence_score?: number;
@@ -11,7 +11,8 @@ interface PronunciationResult {
   prosody_score?: number;
   token_details?: Array<{ char: string; score: number; step: number }>;
   processing_time_ms?: number;
-  details?: string;
+  details?: string; // Keep original 'details' for potential raw output
+  detailed_feedback?: string; // New field for processed, comprehensive feedback
   message?: string;
   raw_response?: string;
 }
@@ -98,21 +99,25 @@ export class ScoringService {
         console.log(`[ScoringService] Received stdout chunk: ${strData.length} chars. Preview: ${strData.substring(0, 50)}...`);
         stdoutData += strData;
 
-        // Try to parse early - if we have a valid JSON, we don't need to wait for 'close'
-        try {
-            // Check if it looks like the end of our JSON (we know our structure ends with "}")
-            if (stdoutData.trim().endsWith('}')) {
-                const result: PronunciationResult = JSON.parse(stdoutData);
-                // Validate it has expected fields to be sure it's not a partial JSON
-                if (result.status && (result.recognized_text !== undefined || result.message)) {
-                     console.log('[ScoringService] Successfully parsed JSON early. Resolving.');
-                     finish(result);
-                }
-            }
-        } catch (e) {
-            // Not a complete JSON yet, continue waiting
-        }
-      });
+                    // Try to parse early - if we have a valid JSON, we don't need to wait for 'close'
+                    try {
+                        // Check if it looks like the end of our JSON (we know our structure ends with "}")
+                        if (stdoutData.trim().endsWith('}')) {
+                            const parsedResult: PronunciationResult = JSON.parse(stdoutData);
+                            // Explicitly map 'details' from python output to 'detailed_feedback'
+                            if (parsedResult.details) {
+                                parsedResult.detailed_feedback = parsedResult.details;
+                                delete parsedResult.details; // Remove original 'details' to avoid redundancy
+                            }
+                            // Validate it has expected fields to be sure it's not a partial JSON
+                            if (parsedResult.status && (parsedResult.recognized_text !== undefined || parsedResult.message)) {
+                                 console.log('[ScoringService] Successfully parsed JSON early. Resolving.');
+                                 finish(parsedResult);
+                            }
+                        }
+                    } catch (e) {
+                        // Not a complete JSON yet, continue waiting
+                    }      });
 
       // Stream stderr immediately to console for real-time debugging (download progress etc.)
       pythonProcess.stderr.on('data', (data) => {
@@ -138,8 +143,13 @@ export class ScoringService {
         }
 
         try {
-          const result: PronunciationResult = JSON.parse(stdoutData);
-          resolve(result);
+          const parsedResult: PronunciationResult = JSON.parse(stdoutData);
+          // Explicitly map 'details' from python output to 'detailed_feedback'
+          if (parsedResult.details) {
+              parsedResult.detailed_feedback = parsedResult.details;
+              delete parsedResult.details; // Remove original 'details' to avoid redundancy
+          }
+          resolve(parsedResult);
         } catch (parseError) {
           console.error('Failed to parse Python output:', stdoutData);
           resolve({

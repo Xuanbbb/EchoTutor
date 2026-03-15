@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { PronunciationResult } from '../services/ScoringService';
 
 export interface EvaluationResult {
   score: number;
@@ -18,10 +19,36 @@ export class LLMService {
     }
   }
 
-  async evaluate(text: string): Promise<EvaluationResult> {
+  async evaluate(text: string, pronunciationResult?: PronunciationResult): Promise<EvaluationResult> {
     if (!this.apiKey) {
       return this.getMockResult(text, 'API Key not configured.');
     }
+
+    const userPayload = {
+      transcription: text,
+      pronunciation_score: pronunciationResult?.pronunciation_score ?? 0,
+      prosody_score: pronunciationResult?.prosody_score ?? 0,
+      pronunciation_analysis: pronunciationResult?.detailed_feedback?.trim() || '',
+    };
+
+    const systemContentText = `You are an expert English tutor.
+
+Your job is to produce the final learner-facing feedback based on structured upstream results.
+
+Important rules:
+- The transcription is raw ASR output. Do not criticize missing punctuation, capitalization, or sentence segmentation.
+- Ignore obvious ASR noise unless it clearly reflects a real vocabulary or grammar problem.
+- grammarIssues must focus only on true English issues such as tense, word choice, prepositions, and sentence structure.
+- Do not perform a fresh pronunciation diagnosis from scratch. Reuse the provided pronunciation analysis.
+- The output must be only one JSON object with no markdown and no extra text.
+
+Return a JSON object with exactly these keys:
+- score: integer 0-100. Use pronunciation_score as the primary basis. Adjust only slightly if the transcription shows obvious language problems.
+- grammarIssues: array of Chinese strings. Each string should describe one specific grammar or expression problem. If none, return [].
+- pronunciationFeedback: array of Chinese strings. Convert the provided pronunciation analysis into 1-3 concise learner-facing points. Do not invent unsupported issues.
+- correction: string in English. Rewrite the intended sentence naturally with proper punctuation and capitalization. If the transcription is too broken, provide the most conservative repair possible.
+
+Keep the feedback concise, concrete, and useful for a learner.`;
 
     try {
       const response = await axios.post(
@@ -34,21 +61,7 @@ export class LLMService {
               content: [
                 {
                   type: 'text',
-                  text: `You are an expert English tutor. Evaluate the user's spoken English transcription.
-              
-              IMPORTANT: The input text is raw ASR output (lowercase, no punctuation).
-              - DO NOT criticize missing punctuation, capitalization, or sentence segmentation.
-              - Ignore spelling mistakes as they are likely ASR transcription errors.
-              - Focus ONLY on vocabulary mistakes, wrong verb tenses, incorrect prepositions, or broken sentence structures.
-              - If the text is unintelligible or seems to be random words, mention that the pronunciation might need improvement.
-              
-              Provide feedback in JSON format with the following keys. IMPORTANT: ONLY return the JSON object, do not include any other text or formatting:
-              - score: (number 0-100)
-              - grammarIssues: (array of strings, in Chinese. Ignore punctuation/casing issues.)
-              - pronunciationFeedback: (array of strings, based on common issues for this transcription, in Chinese)
-              - correction: (string, the natural/correct version of what they said, MUST BE IN ENGLISH, with proper punctuation and capitalization)
-              
-              Keep feedback concise and helpful.`
+                  text: systemContentText
                 }
               ]
             },
@@ -57,7 +70,7 @@ export class LLMService {
               content: [
                 {
                   type: 'text',
-                  text: `Transcription: "${text}"`
+                  text: JSON.stringify(userPayload, null, 2)
                 }
               ]
             }
@@ -93,7 +106,7 @@ export class LLMService {
     return {
       score: 0,
       grammarIssues: [note],
-      pronunciationFeedback: ["AI evaluation unavailable."],
+      pronunciationFeedback: ['AI evaluation unavailable.'],
       correction: text
     };
   }

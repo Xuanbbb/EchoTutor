@@ -1,161 +1,207 @@
-# 项目指导书
+# EchoTutor
 
-## 一、项目名称
+一个面向英语口语练习的桌面原型项目。当前实现重点是“跟读评测”链路：用户输入参考文本后，可以逐句录音练习，系统返回识别文本、发音/语调评分、AI 反馈，并支持播放标准示例音频。
 
-**EchoTutor：基于大模型的智能口语练习系统**
+## 当前已实现功能
 
----
+- 参考文本输入，自动按句切分
+- 逐句跟读练习，支持上一句/下一句切换
+- 麦克风录音提交
+- 本地音频文件上传，便于调试
+- 识别文本与参考句的逐词对比展示
+- 发音准确度、语调节奏、综合反馈三类结果展示
+- 结合音频评分结果生成中文 AI 学习反馈
+- 播放当前句或纠正句的 TTS 标准音频
+- 对静音、超短音频、模型异常场景返回错误信息
 
-## 二、项目目标
+## 当前技术方案
 
-本项目旨在开发一款基于大模型的高效口语练习工具，核心目标如下：
+### 前端
 
-1. **高质量口语评估**
-   利用大模型与语音识别技术，对用户的口语表达进行多维度评分，包括发音准确性、流利度和语法规范性，并提供针对性的纠错建议。
+- `React 19 + Vite`
+- `react-media-recorder` 负责浏览器录音
+- `axios` 调用本地后端接口
 
-2. **多场景、个性化练习**
-   构建丰富的练习场景和对话任务，支持用户自由表达，同时可根据用户水平和兴趣动态调整练习内容。
+当前前端页面主要包含：
 
-3. **实时交互与可视化反馈**
-   实现语音实时录入、分析及评分结果可视化，确保用户获得即时、直观的学习反馈。
+- 跟读文本输入区
+- 当前句展示与句间切换
+- 录音控制
+- 调试用音频上传
+- 结果面板：文本对比、评分、AI 反馈、TTS 回放
 
-4. **工程可行性与可扩展性**
-   系统采用模块化架构，便于后续功能扩展，如引入RAG（检索增强生成）、LoRA微调等AI增强功能。
+### 后端
 
----
+- `Node.js + Express + TypeScript`
+- `multer` 使用内存存储接收音频
+- 提供两个核心接口：
+  - `POST /api/process-audio`
+  - `POST /api/tts-generate`
 
-## 三、预期实现成果
+### 音频评测链路
 
-1. **核心功能模块**
+当前主流程不是传统 ASR -> 评分分离，而是：
 
-   * **语音识别模块（ASR）**：支持实时语音转文本。
-   * **发音评估与纠错模块**：对用户发音进行音标级别分析，标记错误并提供标准发音示例。
-   * **自然对话模块**：实现多轮交互、自由表达并得到自然反馈。
-   * **界面展示模块**：可视化评分结果与练习记录。
+1. 前端上传录音和可选参考文本
+2. Node 服务将音频交给 Python 侧车脚本 `server/python/score.py`
+3. Python 脚本先做音频预处理和静音检测
+4. Python 脚本调用 DashScope `qwen3-omni-flash` 做识别与口语评分
+5. Node 服务再调用 DashScope 对文本和评分结果做二次整理，生成面向学习者的反馈
+6. 前端展示识别文本、分数、反馈和纠正表达
 
-2. **系统原型**
+### TTS 链路
 
-   * 基于 Electron + React 构建桌面应用，前端展示语音输入界面及实时反馈。
-   * 后端使用 Node.js（Express 或 FastAPI 作为可选方案），提供 API 接口调用大模型服务。
-   * 集成第三方大模型 API（如讯飞星火、阿里通义千问）完成语音评估与对话生成。
+- 后端调用 DashScope `qwen3-tts-flash`
+- 前端可以播放：
+  - 当前练习句
+  - AI 建议改写后的句子
 
-3. **实验与验证**
+## 目录结构
 
-   * 在不同口语水平用户上进行测试，验证评分准确性、反馈及时性及交互流畅性。
-   * 收集用户体验反馈，优化系统功能与交互逻辑。
+```text
+EchoTutor/
+├─ client/                 # React 前端
+│  ├─ src/components/AudioRecorder.tsx
+│  └─ electron/            # Electron 入口文件
+├─ server/                 # Node + TS 后端
+│  ├─ src/controllers/AudioController.ts
+│  ├─ src/services/
+│  └─ python/score.py      # Python 音频评分脚本
+└─ README.md
+```
 
----
+## 运行环境
 
-## 四、项目实施路径与技术路线
+当前实现对本地环境有一些明确依赖：
 
-### 1. 技术选型
+- Node.js 18+
+- Python 3.x，并且 `python` 命令可直接使用
+- FFmpeg
+- DashScope API Key
 
-| 模块           | 技术方案             | 说明                                             |
-| ------------ | ---------------- | ---------------------------------------------- |
-| 前端           | React + Electron | 构建跨平台桌面应用，界面交互与可视化展示                           |
-| 后端           | Node.js          | 提供 API 服务，处理音频上传、评估请求，可选 FastAPI（Python）做大模型接入 |
-| ASR（语音识别）    | 讯飞/百度/阿里云 API    | 实时将语音转文本                                       |
-| TTS（文本转语音）   | 讯飞/百度/阿里云 API    | 生成标准发音示例                                       |
-| 口语评估         | 大模型 API          | 对文本进行语法、发音准确性分析，可返回纠错建议                        |
-| RAG/知识增强（可选） | 向量数据库 + LLM      | 若系统需要知识增强或场景丰富化，可通过检索增强生成（RAG）提升交互质量           |
+说明：
 
-### 2. 系统架构
+- `server/python/score.py` 会优先使用 `C:\ffmpeg-7.1.1-full_build\bin\ffmpeg.exe`，不存在时回退到全局 `ffmpeg`
+- 后端服务默认监听 `http://localhost:3000`
+- 前端当前直接请求 `http://localhost:3000/api/...`
 
-前端（Electron + React）
-→ 用户录入语音 → 发送至后端 Node.js 服务
-→ 后端调用 ASR 转文本 → 大模型进行评估/纠错 → TTS 生成示例 → 返回前端
-→ 前端展示评分、反馈与对话界面
+## 环境变量
 
-### 3. 工作流程
+在 `server/.env` 或 `server/python/.env` 中提供：
 
-1. **语音输入**：用户通过麦克风录入语音。
-2. **语音解析**：调用 ASR 将音频转为文本。
-3. **口语评估**：大模型分析文本及音频特征，输出评分和纠错建议。
-4. **反馈呈现**：前端可视化展示评分、标注错误音标和示例发音。
-5. **多轮练习**：用户可继续输入，系统提供连续对话反馈。
-6. **数据记录与统计**：保存用户练习历史，用于个性化推荐和学习曲线分析。
+```env
+DASHSCOPE_API_KEY=your_api_key
+PORT=3000
+```
 
----
+`DASHSCOPE_API_KEY` 同时被以下模块使用：
 
-## 五、主要研究问题与挑战
+- Python 评分脚本
+- Node 侧 LLM 反馈服务
+- Node 侧 TTS 服务
 
-1. **实时性与性能优化**
+## 安装依赖
 
-   * 确保语音识别、评估及反馈在用户可接受的延迟内完成（≤1秒）。
-   * 对长语音或连续多轮对话进行高效处理。
+### 1. 安装前端依赖
 
-2. **评估准确性**
+```bash
+cd client
+npm install
+```
 
-   * 发音、语法与流利度的量化评估标准需科学化、可量化。
-   * 跨方言、不同英语水平用户的评估一致性。
+### 2. 安装后端依赖
 
-3. **系统集成与模块化**
+```bash
+cd server
+npm install
+```
 
-   * 前端、后端、ASR、TTS、大模型 API 需要高效协作。
-   * 系统易扩展，如引入 RAG 或 LoRA 微调功能时无需大规模重构。
+### 3. 安装 Python 依赖
 
-4. **用户体验**
+```bash
+cd server/python
+pip install -r requirements.txt
+```
 
-   * 交互界面直观、简洁，反馈信息易于理解。
-   * 支持个性化练习与场景选择，保持用户粘性。
+## 启动项目
 
----
+建议分别启动后端和前端。
 
-## 六、研究方法与技术措施
+### 启动后端
 
-1. **工程实践为主**
+```bash
+cd server
+npm run dev
+```
 
-   * 采用模块化开发，前后端分离。
-   * 先搭建最小可行原型（MVP），验证核心功能可用性。
+### 启动前端
 
-2. **技术集成**
+```bash
+cd client
+npm run dev
+```
 
-   * 前端 React + Electron 实现桌面应用界面。
-   * Node.js 提供统一 API 服务接口，管理大模型调用。
-   * 调用成熟 ASR / TTS 服务确保音频处理准确、快速。
-   * 可选引入 RAG，通过向量检索增强模型场景化回答能力。
+启动后访问 Vite 输出的本地地址即可。
 
-3. **迭代开发与测试**
+## 接口说明
 
-   * 每完成一个功能模块，进行单元测试和集成测试。
-   * 邀请目标用户进行体验测试，收集改进建议。
+### `POST /api/health`
 
-4. **数据管理**
+健康检查接口。
 
-   * 记录用户练习数据，分析用户学习曲线与常见错误类型。
-   * 用于后续个性化推荐和模型微调研究。
+### `POST /api/process-audio`
 
----
+表单字段：
 
-## 七、项目实施步骤与进度安排
+- `audio`: 音频文件
+- `referenceText`: 可选，当前跟读句子
 
-| 阶段   | 时间      | 任务内容                               |
-| ---- | ------- | ---------------------------------- |
-| 第1阶段 | 第1-2周   | 技术调研：大模型、ASR/TTS 服务选型，工具链确认，项目环境搭建 |
-| 第2阶段 | 第3-4周   | 后端 API 搭建：Node.js 服务，集成 ASR/TTS 调用 |
-| 第3阶段 | 第5-6周   | 前端界面开发：React + Electron，语音录入与反馈展示  |
-| 第4阶段 | 第7-8周   | 大模型评估模块开发：口语评分、纠错功能                |
-| 第5阶段 | 第9周     | 多轮对话交互功能开发，初步用户体验优化                |
-| 第6阶段 | 第10周    | 可选 RAG 集成，丰富对话场景                   |
-| 第7阶段 | 第11-12周 | 系统测试与优化，性能调优，准备最终演示和论文撰写           |
+返回内容包含：
 
----
+- `analysis.transcription`
+- `analysis.pronunciationScore`
+- `analysis.prosodyScore`
+- `analysis.confidenceScore`
+- `analysis.pronunciationAnalysis`
+- `feedback.overallScore`
+- `feedback.grammarIssues`
+- `feedback.pronunciationFeedback`
+- `feedback.correction`
 
-## 八、主要参考文献
+同时保留了兼容旧前端的数据字段：
 
-1. Vaswani, A., et al. *Attention is All You Need*. NeurIPS, 2017.
-2. Brown, T., et al. *Language Models are Few-Shot Learners*. NeurIPS, 2020.
-3. Kocmi, T., Bojar, O. *Transfer Learning in NLP*. 2017.
-4. OpenAI API Documentation. [https://platform.openai.com/docs](https://platform.openai.com/docs)
-5. 讯飞开放平台 API 文档. [https://www.xfyun.cn/services/online_tts](https://www.xfyun.cn/services/online_tts)
-6. Electron 官方文档. [https://www.electronjs.org/docs](https://www.electronjs.org/docs)
-7. React 官方文档. [https://reactjs.org/docs/getting-started.html](https://reactjs.org/docs/getting-started.html)
-8. Chen, D., et al. *RAG: Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks*. 2021.
+- `transcription`
+- `scoring`
+- `evaluation`
 
----
+### `POST /api/tts-generate`
 
-### 九、总结
+请求体：
 
-本项目通过**前后端工程实践 + 大模型 AI 技术集成**，实现一套完整的口语练习工具。指导书明确了**项目目标、核心技术路线、实施步骤与进度安排**，为系统开发提供清晰的技术路径与实践框架，并为最终成果的论文撰写与答辩奠定基础。
+```json
+{
+  "text": "Please read this sentence."
+}
+```
 
+返回 `audio/mpeg` 音频流。
 
+## 已知限制
+
+- 当前前端接口地址写死为 `http://localhost:3000`
+- Python 音频评分依赖本机 Python 与 FFmpeg 环境
+- 评测和 TTS 都依赖外部 DashScope 服务，离线不可用
+- 项目中存在未完全接入的 `ASRService`，当前主链路并未使用该服务
+- 目前更接近可运行 Demo，还没有用户体系、历史记录存储和正式打包流程
+
+## 后续可继续完善的方向
+
+- 将前端 API 地址改为可配置
+- 增加 Electron 开发/打包脚本并统一启动流程
+- 持久化练习记录与评分历史
+- 增加更稳健的文本对齐算法，而不是当前的顺序逐词对比
+- 为服务端和 Python 侧车增加自动化测试
+
+## 备注
+
+如果你现在看到的代码比 README 更“新”，以代码实现为准。这个 README 旨在准确描述仓库当前已经落地的能力，而不是最初的项目规划。
