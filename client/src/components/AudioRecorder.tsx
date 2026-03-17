@@ -55,6 +55,16 @@ interface DiffToken {
   type: 'match' | 'missing' | 'extra';
 }
 
+type ViewMode = 'practice' | 'processing' | 'result';
+type ResultTab = 'feedback' | 'correction' | 'transcript';
+type InputMode = 'text' | 'record' | 'upload';
+
+const inputModeLabels: Record<InputMode, string> = {
+  text: '输入参考文本',
+  record: '录音评测',
+  upload: '上传音频文件',
+};
+
 const splitIntoSentences = (text: string): string[] =>
   text
     .split(/(?<=[.!?。！？])\s+|\n+/)
@@ -114,14 +124,24 @@ const AudioRecorder = () => {
   const [referenceText, setReferenceText] = useState('');
   const [currentSentenceIndex, setCurrentSentenceIndex] = useState(0);
   const [lastPracticedSentence, setLastPracticedSentence] = useState('');
+  const [viewMode, setViewMode] = useState<ViewMode>('practice');
+  const [resultTab, setResultTab] = useState<ResultTab>('feedback');
+  const [showDiffDetails, setShowDiffDetails] = useState(false);
+  const [inputMode, setInputMode] = useState<InputMode>('text');
+  const [isFollowReadingMode, setIsFollowReadingMode] = useState(false);
 
   const sentences = splitIntoSentences(referenceText);
-  const hasSentenceMode = sentences.length > 0;
+  const hasSentenceMode = isFollowReadingMode && sentences.length > 0;
   const currentSentence = hasSentenceMode ? sentences[Math.min(currentSentenceIndex, sentences.length - 1)] : '';
   const activePracticeText = currentSentence || referenceText.trim();
   const comparisonTokens = lastPracticedSentence
     ? buildDiffTokens(lastPracticedSentence, transcription)
     : [];
+  const differenceCount = comparisonTokens.filter((token) => token.type !== 'match').length;
+  const hasResult = Boolean(transcription || evaluation || scoring || lastPracticedSentence);
+  const canPassCurrentSentence =
+    (scoring?.pronunciation_score ?? 0) >= 80 && (scoring?.prosody_score ?? 0) >= 75;
+  const followReadingSourceText = evaluation?.correction?.trim() || transcription.trim();
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -133,7 +153,28 @@ const AudioRecorder = () => {
   const handleReferenceTextChange = (value: string) => {
     setReferenceText(value);
     setCurrentSentenceIndex(0);
+    setIsFollowReadingMode(false);
     setLastPracticedSentence('');
+    setTranscription('');
+    setEvaluation(null);
+    setScoring(null);
+    setViewMode('practice');
+  };
+
+  const activateFollowReading = (text: string) => {
+    const normalizedText = text.trim();
+    if (!normalizedText) return;
+    setReferenceText(normalizedText);
+    setCurrentSentenceIndex(0);
+    setIsFollowReadingMode(true);
+    setViewMode('practice');
+    setInputMode('text');
+    resetResultPanel();
+  };
+
+  const resetResultPanel = () => {
+    setResultTab('feedback');
+    setShowDiffDetails(false);
   };
 
   const processAudioData = async (audioData: Blob | File, fileName: string) => {
@@ -141,6 +182,8 @@ const AudioRecorder = () => {
     setEvaluation(null);
     setScoring(null);
     setTranscription('');
+    setViewMode('processing');
+    resetResultPanel();
 
     const submittedReferenceText = activePracticeText;
     setLastPracticedSentence(submittedReferenceText);
@@ -157,8 +200,9 @@ const AudioRecorder = () => {
 
       const analysis = data.analysis;
       const feedback = data.feedback;
+      const nextTranscription = analysis?.transcription || data.transcription || '';
 
-      setTranscription(analysis?.transcription || data.transcription || '');
+      setTranscription(nextTranscription);
 
       if (feedback) {
         setEvaluation({
@@ -182,14 +226,20 @@ const AudioRecorder = () => {
       } else {
         setScoring(data.scoring || null);
       }
-    } catch (error: any) {
+
+      setResultTab(nextTranscription ? 'feedback' : 'transcript');
+      setViewMode('result');
+    } catch (error: unknown) {
       console.error('Error submitting audio:', error);
+      const axiosError = axios.isAxiosError(error) ? error : null;
+      const genericError = error instanceof Error ? error : null;
       const errorMessage =
-        error.response?.data?.error?.detail ||
-        error.response?.data?.status?.message ||
-        error.response?.data?.error ||
-        error.message ||
+        axiosError?.response?.data?.error?.detail ||
+        axiosError?.response?.data?.status?.message ||
+        axiosError?.response?.data?.error ||
+        genericError?.message ||
         'Failed to process audio';
+      setViewMode('practice');
       alert(`Error: ${errorMessage}`);
     } finally {
       setLoading(false);
@@ -242,6 +292,14 @@ const AudioRecorder = () => {
     }
   };
 
+  const resetCurrentResult = () => {
+    setTranscription('');
+    setEvaluation(null);
+    setScoring(null);
+    setLastPracticedSentence('');
+    resetResultPanel();
+  };
+
   const moveSentence = (direction: -1 | 1) => {
     if (!hasSentenceMode) return;
     setCurrentSentenceIndex((prev) => {
@@ -250,122 +308,295 @@ const AudioRecorder = () => {
       if (next >= sentences.length) return sentences.length - 1;
       return next;
     });
-    setLastPracticedSentence('');
-    setTranscription('');
-    setEvaluation(null);
-    setScoring(null);
+    resetCurrentResult();
+    setViewMode('practice');
   };
 
-  const canPassCurrentSentence =
-    (scoring?.pronunciation_score ?? 0) >= 80 && (scoring?.prosody_score ?? 0) >= 75;
+  const handleRetryCurrentSentence = () => {
+    setViewMode('practice');
+    resetResultPanel();
+    setInputMode('record');
+  };
 
-  return (
-    <div className="recorder-container">
-      <div className="recorder-header">
-        <h2>口语练习工作台</h2>
-        <p className="recorder-subtitle">逐句跟读、即时评测、立刻重读。</p>
-      </div>
+  const handleNextSentence = () => {
+    if (!hasSentenceMode || currentSentenceIndex >= sentences.length - 1) return;
+    moveSentence(1);
+  };
 
-      <div className="controls-section">
-        <div className="control-card control-card-wide">
-          <h3>参考文本（跟读模式）</h3>
-          <textarea
-            className="reference-text-input"
-            placeholder="输入一段英文，系统会自动按句拆分进行跟读练习..."
-            value={referenceText}
-            onChange={(e) => handleReferenceTextChange(e.target.value)}
-            rows={5}
-          />
-
+  const renderPracticePage = () => (
+    <div className="practice-layout">
+      <div className="page-topbar">
+        <div>
+          <h2>{inputModeLabels[inputMode]}</h2>
+        </div>
+        <div className="topbar-actions">
           {hasSentenceMode && (
-            <div className="sentence-panel">
-              <div className="sentence-panel-header">
-                <span>当前句子</span>
-                <span>{currentSentenceIndex + 1} / {sentences.length}</span>
+            <div className="progress-pill">
+              {currentSentenceIndex + 1} / {sentences.length}
+            </div>
+          )}
+          {hasResult && (
+            <button className="btn-outline" onClick={() => setViewMode('result')}>
+              查看上次结果
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="practice-main-layout">
+        <div className="mode-switcher mode-switcher-vertical">
+          <button
+            className={`mode-button ${inputMode === 'text' ? 'active' : ''}`}
+            onClick={() => setInputMode('text')}
+          >
+            参考文本
+          </button>
+          <button
+            className={`mode-button ${inputMode === 'record' ? 'active' : ''}`}
+            onClick={() => setInputMode('record')}
+          >
+            录音输入
+          </button>
+          <button
+            className={`mode-button ${inputMode === 'upload' ? 'active' : ''}`}
+            onClick={() => setInputMode('upload')}
+          >
+            文件上传
+          </button>
+        </div>
+
+        <div className="practice-content-column">
+          {isFollowReadingMode && hasSentenceMode && (
+            <div className="focus-card focus-card-compact">
+              <div className="focus-card-header">
+                <div className="focus-card-heading">
+                  <div className="eyebrow">当前跟读句</div>
+                </div>
+                <div className={`pass-chip ${canPassCurrentSentence && hasResult ? 'pass' : 'retry'}`}>
+                  {hasResult ? (canPassCurrentSentence ? '上次结果：通过' : '上次结果：建议重读') : '等待本轮评测'}
+                </div>
               </div>
-              <div className="sentence-card">{currentSentence}</div>
-              <div className="sentence-actions">
-                <button className="btn-outline" onClick={() => moveSentence(-1)} disabled={currentSentenceIndex === 0}>
-                  上一句
-                </button>
-                <button className="btn-primary" onClick={() => playCorrectionAudio(currentSentence)} disabled={!currentSentence || playingAudio}>
-                  {playingAudio ? '播放中...' : '播放当前句'}
-                </button>
+
+              <div className="focus-sentence-row">
+                <div className="focus-sentence">{activePracticeText}</div>
+                <div className="sentence-actions sentence-actions-compact">
+                  <button
+                    className="icon-button icon-button-primary"
+                    onClick={() => playCorrectionAudio(activePracticeText)}
+                    disabled={!activePracticeText || playingAudio}
+                    title={playingAudio ? '播放中' : '播放示例'}
+                    aria-label="播放示例"
+                  >
+                    {">"}
+                  </button>
+                  <button
+                    className="icon-button"
+                    onClick={() => moveSentence(-1)}
+                    disabled={!hasSentenceMode || currentSentenceIndex === 0}
+                    title="上一句"
+                    aria-label="上一句"
+                  >
+                    ←
+                  </button>
+                  <button
+                    className="icon-button"
+                    onClick={() => moveSentence(1)}
+                    disabled={!hasSentenceMode || currentSentenceIndex >= sentences.length - 1}
+                    title="下一句"
+                    aria-label="下一句"
+                  >
+                    →
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {inputMode === 'text' && (
+            <div className="control-card control-card-wide">
+              <h3>参考文本</h3>
+              <textarea
+                className="reference-text-input"
+                placeholder="输入一段英文，系统会自动按句拆分并进入跟读练习..."
+                value={referenceText}
+                onChange={(e) => handleReferenceTextChange(e.target.value)}
+                rows={5}
+              />
+
+              <div className="inline-actions">
                 <button
-                  className="btn-outline"
-                  onClick={() => moveSentence(1)}
-                  disabled={currentSentenceIndex >= sentences.length - 1}
+                  className="btn-primary"
+                  onClick={() => activateFollowReading(referenceText)}
+                  disabled={!referenceText.trim()}
                 >
-                  下一句
+                  进入跟读模式
                 </button>
               </div>
+
+              {isFollowReadingMode && hasSentenceMode && (
+                <div className="sentence-panel">
+                  <div className="sentence-panel-header">
+                    <span>句子导航</span>
+                    <span>{currentSentenceIndex + 1} / {sentences.length}</span>
+                  </div>
+                  <div className="sentence-card">{currentSentence}</div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {inputMode === 'record' && (
+            <div className="control-card">
+              <h3>录音评测</h3>
+              <span className={`status-label ${status === 'recording' ? 'recording' : ''}`}>
+                状态：{status.toUpperCase()}
+              </span>
+
+              <div className="button-group">
+                <button className="btn-primary" onClick={startRecording} disabled={status === 'recording'}>
+                  开始录音
+                </button>
+                <button className="btn-secondary" onClick={stopRecording} disabled={status !== 'recording'}>
+                  停止录音
+                </button>
+                <button className="btn-outline" onClick={clearBlobUrl} disabled={!mediaBlobUrl}>
+                  清除
+                </button>
+              </div>
+
+              {mediaBlobUrl && (
+                <div className="player-wrapper">
+                  <audio src={mediaBlobUrl} controls className="audio-player" />
+                  <button className="btn-accent" onClick={handleSubmitRecorded} disabled={loading}>
+                    {loading ? '处理中...' : '提交评测'}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {inputMode === 'upload' && (
+            <div className="control-card">
+              <h3>上传音频（调试）</h3>
+              <div className="upload-box">
+                <input type="file" accept="audio/*" onChange={handleFileUpload} className="file-input" />
+              </div>
+              {selectedFile && (
+                <div className="player-wrapper">
+                  <p className="selected-file">已选择：{selectedFile.name}</p>
+                  <button className="btn-accent" onClick={handleSubmitUploaded} disabled={loading}>
+                    {loading ? '处理中...' : '提交上传文件'}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderProcessingPage = () => (
+    <div className="processing-layout">
+      <div className="processing-orb" />
+      <div className="eyebrow">正在分析</div>
+      <h2>AI 正在评估这句话</h2>
+      <p>系统会先做音频识别和发音评分，再生成面向学习者的反馈。</p>
+      {lastPracticedSentence && <div className="processing-quote">{lastPracticedSentence}</div>}
+    </div>
+  );
+
+  const renderResultPage = () => (
+    <div className="result-layout">
+      <div className="page-topbar">
+        <div>
+          <div className="eyebrow">评测结果</div>
+          <h2>本句复盘</h2>
+        </div>
+        <div className="topbar-actions">
+          <button className="btn-outline" onClick={() => setViewMode('practice')}>
+            返回练习页
+          </button>
+          {isFollowReadingMode && hasSentenceMode && (
+            <div className="progress-pill">
+              {currentSentenceIndex + 1} / {sentences.length}
             </div>
           )}
         </div>
       </div>
 
-      <div className="controls-section">
-        <div className="control-card">
-          <h3>录音评测</h3>
-          <span className={`status-label ${status === 'recording' ? 'recording' : ''}`}>
-            状态：{status.toUpperCase()}
-          </span>
-
-          <div className="button-group">
-            <button className="btn-primary" onClick={startRecording} disabled={status === 'recording'}>
-              开始录音
-            </button>
-            <button className="btn-secondary" onClick={stopRecording} disabled={status !== 'recording'}>
-              停止录音
-            </button>
-            <button className="btn-outline" onClick={clearBlobUrl} disabled={!mediaBlobUrl}>
-              清除
-            </button>
-          </div>
-
-          {mediaBlobUrl && (
-            <div className="player-wrapper">
-              <audio src={mediaBlobUrl} controls className="audio-player" />
-              <button className="btn-accent" onClick={handleSubmitRecorded} disabled={loading}>
-                {loading ? '处理中...' : '提交当前录音'}
-              </button>
-            </div>
-          )}
+      <div className="result-hero">
+        <div className="result-hero-main">
+          <div className="summary-label">本次练习句</div>
+          <div className="summary-text">{lastPracticedSentence || activePracticeText || '未提供参考句。'}</div>
         </div>
-
-        <div className="control-card">
-          <h3>上传音频（调试）</h3>
-          <div className="upload-box">
-            <input type="file" accept="audio/*" onChange={handleFileUpload} className="file-input" />
-          </div>
-          {selectedFile && (
-            <div className="player-wrapper">
-              <p className="selected-file">已选择：{selectedFile.name}</p>
-              <button className="btn-accent" onClick={handleSubmitUploaded} disabled={loading}>
-                {loading ? '处理中...' : '提交上传文件'}
-              </button>
-            </div>
-          )}
+        <div className={`result-badge ${canPassCurrentSentence ? 'pass' : 'retry'}`}>
+          {canPassCurrentSentence ? '当前句通过' : '建议继续重读'}
         </div>
       </div>
 
-      {(transcription || evaluation || scoring || lastPracticedSentence) && (
-        <div className="feedback-section">
-          {lastPracticedSentence && (
-            <div className="practice-summary">
-              <div>
-                <div className="summary-label">本次练习句</div>
-                <div className="summary-text">{lastPracticedSentence}</div>
-              </div>
-              <div className={`pass-chip ${canPassCurrentSentence ? 'pass' : 'retry'}`}>
-                {canPassCurrentSentence ? '当前句通过' : '建议继续重读'}
-              </div>
-            </div>
-          )}
+      {scoring && evaluation && (
+        <div className="scores-grid">
+          <div className="score-card pronunciation">
+            <span>发音准确度</span>
+            <span className="score-value">{scoring.pronunciation_score}</span>
+          </div>
+          <div className="score-card prosody">
+            <span>语调节奏</span>
+            <span className="score-value">{scoring.prosody_score}</span>
+          </div>
+          <div className="score-card overall">
+            <span>综合反馈</span>
+            <span className="score-value">{evaluation.score}</span>
+          </div>
+        </div>
+      )}
 
-          {comparisonTokens.length > 0 && (
-            <div className="comparison-box">
+      <div className="result-actions">
+        <button
+          className="btn-secondary"
+          onClick={() => playCorrectionAudio(lastPracticedSentence || activePracticeText)}
+          disabled={playingAudio || !(lastPracticedSentence || activePracticeText)}
+        >
+          {playingAudio ? '播放中...' : '播放标准音频'}
+        </button>
+        <button className="btn-primary" onClick={handleRetryCurrentSentence}>
+          再练一次
+        </button>
+        <button
+          className="btn-outline"
+          onClick={() => activateFollowReading(followReadingSourceText)}
+          disabled={!followReadingSourceText}
+        >
+          转为跟读模式
+        </button>
+        {isFollowReadingMode && hasSentenceMode && (
+          <button
+            className="btn-accent"
+            onClick={handleNextSentence}
+            disabled={currentSentenceIndex >= sentences.length - 1}
+          >
+            下一句
+          </button>
+        )}
+      </div>
+
+      {comparisonTokens.length > 0 && (
+        <div className="comparison-box">
+          <div className="comparison-summary-row">
+            <div>
               <div className="comparison-title">文本对比</div>
+              <div className="summary-label">
+                {differenceCount > 0 ? `识别结果与目标句存在 ${differenceCount} 处差异` : '识别文本与目标句基本一致'}
+              </div>
+            </div>
+            <button className="btn-outline" onClick={() => setShowDiffDetails((prev) => !prev)}>
+              {showDiffDetails ? '收起详情' : '展开详情'}
+            </button>
+          </div>
+
+          {showDiffDetails && (
+            <>
               <div className="comparison-legend">
                 <span className="legend-item legend-match">一致</span>
                 <span className="legend-item legend-missing">漏读/错读</span>
@@ -378,93 +609,109 @@ const AudioRecorder = () => {
                   </span>
                 ))}
               </div>
-            </div>
-          )}
-
-          {transcription && (
-            <div className="transcription-box">
-              <strong>识别文本：</strong>{transcription}
-            </div>
-          )}
-
-          {scoring && evaluation && (
-            <div className="scores-grid">
-              <div className="score-card pronunciation">
-                <span>发音准确度</span>
-                <span className="score-value">{scoring.pronunciation_score}</span>
-              </div>
-              <div className="score-card prosody">
-                <span>语调节奏</span>
-                <span className="score-value">{scoring.prosody_score}</span>
-              </div>
-              <div className="score-card overall">
-                <span>综合反馈</span>
-                <span className="score-value">{evaluation.score}</span>
-              </div>
-            </div>
-          )}
-
-          <div className="retry-row">
-            <button className="btn-primary" onClick={() => playCorrectionAudio(lastPracticedSentence || activePracticeText)} disabled={playingAudio || !(lastPracticedSentence || activePracticeText)}>
-              {playingAudio ? '播放中...' : '播放本句标准音频'}
-            </button>
-            <button className="btn-secondary" onClick={handleSubmitRecorded} disabled={loading || !mediaBlobUrl}>
-              {loading ? '处理中...' : '重新录这一句'}
-            </button>
-            {hasSentenceMode && (
-              <button
-                className="btn-accent"
-                onClick={() => moveSentence(1)}
-                disabled={currentSentenceIndex >= sentences.length - 1}
-              >
-                进入下一句
-              </button>
-            )}
-          </div>
-
-          {evaluation && (
-            <div className="ai-feedback-container">
-              <h3>AI 反馈</h3>
-
-              <div className="feedback-category">
-                <h4>发音建议</h4>
-                <ul className="feedback-list">
-                  {evaluation.pronunciationFeedback.map((issue, idx) => (
-                    <li key={idx}>{issue}</li>
-                  ))}
-                </ul>
-              </div>
-
-              <div className="feedback-category">
-                <h4>语法检查</h4>
-                <ul className="feedback-list">
-                  {evaluation.grammarIssues.length > 0 ? evaluation.grammarIssues.map((issue, idx) => (
-                    <li key={idx}>{issue}</li>
-                  )) : <li>当前句未发现明显语法问题。</li>}
-                </ul>
-              </div>
-
-              <div className="feedback-category">
-                <h4>更自然的表达</h4>
-                <div className="correction-header">
-                  <span>建议句子</span>
-                  {evaluation.correction && (
-                    <button
-                      className="play-button"
-                      onClick={() => playCorrectionAudio(evaluation.correction)}
-                      disabled={playingAudio}
-                      title="播放标准发音"
-                    >
-                      {playingAudio ? '播放中' : '播放'}
-                    </button>
-                  )}
-                </div>
-                <div className="correction-box">{evaluation.correction}</div>
-              </div>
-            </div>
+            </>
           )}
         </div>
       )}
+
+      <div className="ai-feedback-container">
+        <div className="tab-row">
+          <button
+            className={`tab-button ${resultTab === 'feedback' ? 'active' : ''}`}
+            onClick={() => setResultTab('feedback')}
+          >
+            发音建议
+          </button>
+          <button
+            className={`tab-button ${resultTab === 'correction' ? 'active' : ''}`}
+            onClick={() => setResultTab('correction')}
+          >
+            表达修正
+          </button>
+          <button
+            className={`tab-button ${resultTab === 'transcript' ? 'active' : ''}`}
+            onClick={() => setResultTab('transcript')}
+          >
+            识别文本
+          </button>
+        </div>
+
+        {resultTab === 'feedback' && evaluation && (
+          <div className="feedback-panel feedback-panel-fixed">
+            <div className="feedback-category">
+              <h4>发音建议</h4>
+              <ul className="feedback-list">
+                {evaluation.pronunciationFeedback.length > 0 ? (
+                  evaluation.pronunciationFeedback.map((issue, idx) => <li key={idx}>{issue}</li>)
+                ) : (
+                  <li>本次未返回额外发音建议。</li>
+                )}
+              </ul>
+            </div>
+
+            <div className="feedback-category">
+              <h4>语法检查</h4>
+              <ul className="feedback-list">
+                {evaluation.grammarIssues.length > 0 ? (
+                  evaluation.grammarIssues.map((issue, idx) => <li key={idx}>{issue}</li>)
+                ) : (
+                  <li>当前句未发现明显语法问题。</li>
+                )}
+              </ul>
+            </div>
+          </div>
+        )}
+
+        {resultTab === 'correction' && evaluation && (
+          <div className="feedback-panel feedback-panel-fixed">
+            <div className="feedback-category">
+              <h4>更自然的表达</h4>
+              <div className="correction-header">
+                <span>建议句子</span>
+                {evaluation.correction && (
+                  <button
+                    className="play-button"
+                    onClick={() => playCorrectionAudio(evaluation.correction)}
+                    disabled={playingAudio}
+                    title="播放标准发音"
+                  >
+                    {playingAudio ? '播放中...' : '播放'}
+                  </button>
+                )}
+              </div>
+              <div className="correction-box">{evaluation.correction || '当前没有改写建议。'}</div>
+            </div>
+          </div>
+        )}
+
+        {resultTab === 'transcript' && (
+          <div className="feedback-panel feedback-panel-fixed">
+            <div className="transcription-box">
+              <strong>识别文本：</strong>
+              {transcription || '当前没有识别结果。'}
+            </div>
+            {scoring?.details && (
+              <div className="detail-note">
+                <strong>模型分析：</strong>
+                {scoring.details}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="recorder-container">
+      <div className="recorder-header">
+        <h2>口语练习工作台</h2>
+        <p className="recorder-subtitle">逐句跟读、即时评测、快速切换练习与结果视图</p>
+      </div>
+
+      {viewMode === 'practice' && renderPracticePage()}
+      {viewMode === 'processing' && renderProcessingPage()}
+      {viewMode === 'result' && renderResultPage()}
     </div>
   );
 };

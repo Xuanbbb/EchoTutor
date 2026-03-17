@@ -43,8 +43,8 @@
 body {
   margin: 0;
   display: flex;
-  place-items: center;
   justify-content: center;
+  align-items: flex-start;
   min-width: 320px;
   min-height: 100vh;
   background-image: radial-gradient(circle at 10% 20%, rgba(253, 255, 182, 0.4) 0%, transparent 20%),
