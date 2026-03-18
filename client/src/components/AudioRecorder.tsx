@@ -168,7 +168,7 @@ const AudioRecorder = () => {
     setCurrentSentenceIndex(0);
     setIsFollowReadingMode(true);
     setViewMode('practice');
-    setInputMode('text');
+    setInputMode('record');
     resetResultPanel();
   };
 
@@ -347,7 +347,11 @@ const AudioRecorder = () => {
         <div className="mode-switcher mode-switcher-vertical">
           <button
             className={`mode-button ${inputMode === 'text' ? 'active' : ''}`}
-            onClick={() => setInputMode('text')}
+            onClick={() => {
+              setInputMode('text');
+              setIsFollowReadingMode(false);
+              setViewMode('practice');
+            }}
           >
             参考文本
           </button>
@@ -371,48 +375,49 @@ const AudioRecorder = () => {
               <div className="focus-card-header">
                 <div className="focus-card-heading">
                   <div className="eyebrow">当前跟读句</div>
+                  <button
+                    className="icon-button icon-button-primary sentence-play-button"
+                    onClick={() => playCorrectionAudio(activePracticeText)}
+                    disabled={!activePracticeText || playingAudio}
+                    title={playingAudio ? '???' : '????'}
+                    aria-label="????"
+                  >
+                    {'▶'}
+                  </button>
                 </div>
                 <div className={`pass-chip ${canPassCurrentSentence && hasResult ? 'pass' : 'retry'}`}>
                   {hasResult ? (canPassCurrentSentence ? '上次结果：通过' : '上次结果：建议重读') : '等待本轮评测'}
                 </div>
               </div>
 
-              <div className="focus-sentence-row">
-                <div className="focus-sentence">{activePracticeText}</div>
-                <div className="sentence-actions sentence-actions-compact">
-                  <button
-                    className="icon-button icon-button-primary"
-                    onClick={() => playCorrectionAudio(activePracticeText)}
-                    disabled={!activePracticeText || playingAudio}
-                    title={playingAudio ? '播放中' : '播放示例'}
-                    aria-label="播放示例"
-                  >
-                    {">"}
-                  </button>
-                  <button
-                    className="icon-button"
-                    onClick={() => moveSentence(-1)}
-                    disabled={!hasSentenceMode || currentSentenceIndex === 0}
-                    title="上一句"
-                    aria-label="上一句"
-                  >
-                    ←
-                  </button>
-                  <button
-                    className="icon-button"
-                    onClick={() => moveSentence(1)}
-                    disabled={!hasSentenceMode || currentSentenceIndex >= sentences.length - 1}
-                    title="下一句"
-                    aria-label="下一句"
-                  >
-                    →
-                  </button>
+              <div className="focus-sentence-shell">
+                <button
+                  className="icon-button sentence-nav-button sentence-nav-button-left"
+                  onClick={() => moveSentence(-1)}
+                  disabled={!hasSentenceMode || currentSentenceIndex === 0}
+                  title="???"
+                  aria-label="???"
+                >
+                  {'<'}
+                </button>
+                <div className="focus-sentence-row">
+                  <div className="focus-sentence">{activePracticeText}</div>
+                  
                 </div>
+                <button
+                  className="icon-button sentence-nav-button sentence-nav-button-right"
+                  onClick={() => moveSentence(1)}
+                  disabled={!hasSentenceMode || currentSentenceIndex >= sentences.length - 1}
+                  title="???"
+                  aria-label="???"
+                >
+                  {'>'}
+                </button>
               </div>
             </div>
           )}
 
-          {inputMode === 'text' && (
+          {inputMode === 'text' && !isFollowReadingMode && (
             <div className="control-card control-card-wide">
               <h3>参考文本</h3>
               <textarea
