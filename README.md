@@ -45,7 +45,7 @@
 1. 前端上传录音和可选参考文本
 2. Node 服务将音频交给 Python 侧车脚本 `server/python/score.py`
 3. Python 脚本先做音频预处理和静音检测
-4. Python 脚本调用 DashScope `qwen3-omni-flash` 做识别与口语评分
+4. Python 脚本优先调用火山方舟“豆包·语音识别大模型”做语音识别，并基于识别结果与参考文本做保守的发音评分估算
 5. Node 服务再调用 DashScope 对文本和评分结果做二次整理，生成面向学习者的反馈
 6. 前端展示识别文本、分数、反馈和纠正表达
 
@@ -77,7 +77,7 @@ EchoTutor/
 - Node.js 18+
 - Python 3.x，并且 `python` 命令可直接使用
 - FFmpeg
-- DashScope API Key
+- Speech provider API Key
 
 说明：
 
@@ -90,11 +90,18 @@ EchoTutor/
 在 `server/.env` 或 `server/python/.env` 中提供：
 
 ```env
+VOLCENGINE_SPEECH_API_KEY=your_api_key
+VOLCENGINE_SPEECH_RESOURCE_ID=volc.bigasr.auc_turbo
+VOLCENGINE_SPEECH_BASE_URL=https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash
+
+# Optional fallback
 DASHSCOPE_API_KEY=your_api_key
 PORT=3000
 ```
 
-`DASHSCOPE_API_KEY` 同时被以下模块使用：
+推荐使用火山官方 OpenSpeech 识别接口，资源 ID 可先用 `volc.bigasr.auc_turbo`，如控制台给了你专用资源 ID，再替换成控制台值。
+
+`VOLCENGINE_SPEECH_API_KEY` / `DASHSCOPE_API_KEY` 同时被以下模块使用：
 
 - Python 评分脚本
 - Node 侧 LLM 反馈服务

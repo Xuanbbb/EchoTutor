@@ -25,6 +25,15 @@ interface AnalysisResult {
   prosodyScore: number;
   confidenceScore: number;
   pronunciationAnalysis: string;
+  wordAlignment?: {
+    referenceText: string;
+    mismatchCount: number;
+    tokens: Array<{
+      expected: string;
+      actual: string;
+      status: 'match' | 'missing' | 'extra' | 'substituted';
+    }>;
+  };
 }
 
 interface FeedbackResult {
@@ -53,6 +62,7 @@ interface ProcessAudioResponse {
 interface DiffToken {
   text: string;
   type: 'match' | 'missing' | 'extra';
+  actualText?: string;
 }
 
 type ViewMode = 'practice' | 'processing' | 'result';
@@ -111,6 +121,39 @@ const buildDiffTokens = (reference: string, actual: string): DiffToken[] => {
   return diffTokens;
 };
 
+const buildDiffTokensFromAlignment = (alignment?: AnalysisResult['wordAlignment']): DiffToken[] => {
+  if (!alignment) {
+    return [];
+  }
+
+  const diffTokens: DiffToken[] = [];
+
+  alignment.tokens.forEach((token) => {
+    if (token.status === 'match') {
+      diffTokens.push({ text: token.actual || token.expected, type: 'match' });
+      return;
+    }
+
+    if (token.status === 'missing') {
+      diffTokens.push({ text: token.expected, type: 'missing' });
+      return;
+    }
+
+    if (token.status === 'extra') {
+      diffTokens.push({ text: token.actual, type: 'extra' });
+      return;
+    }
+
+    diffTokens.push({
+      text: token.expected,
+      type: 'missing',
+      actualText: token.actual,
+    });
+  });
+
+  return diffTokens;
+};
+
 const AudioRecorder = () => {
   const { status, startRecording, stopRecording, mediaBlobUrl, clearBlobUrl } =
     useReactMediaRecorder({ audio: true });
@@ -129,14 +172,15 @@ const AudioRecorder = () => {
   const [showDiffDetails, setShowDiffDetails] = useState(false);
   const [inputMode, setInputMode] = useState<InputMode>('text');
   const [isFollowReadingMode, setIsFollowReadingMode] = useState(false);
+  const [wordAlignment, setWordAlignment] = useState<AnalysisResult['wordAlignment'] | null>(null);
 
   const sentences = splitIntoSentences(referenceText);
   const hasSentenceMode = isFollowReadingMode && sentences.length > 0;
   const currentSentence = hasSentenceMode ? sentences[Math.min(currentSentenceIndex, sentences.length - 1)] : '';
   const activePracticeText = currentSentence || referenceText.trim();
-  const comparisonTokens = lastPracticedSentence
-    ? buildDiffTokens(lastPracticedSentence, transcription)
-    : [];
+  const comparisonTokens = wordAlignment
+    ? buildDiffTokensFromAlignment(wordAlignment)
+    : (lastPracticedSentence ? buildDiffTokens(lastPracticedSentence, transcription) : []);
   const differenceCount = comparisonTokens.filter((token) => token.type !== 'match').length;
   const hasResult = Boolean(transcription || evaluation || scoring || lastPracticedSentence);
   const canPassCurrentSentence =
@@ -156,6 +200,7 @@ const AudioRecorder = () => {
     setIsFollowReadingMode(false);
     setLastPracticedSentence('');
     setTranscription('');
+    setWordAlignment(null);
     setEvaluation(null);
     setScoring(null);
     setViewMode('practice');
@@ -172,6 +217,17 @@ const AudioRecorder = () => {
     resetResultPanel();
   };
 
+  const exitFollowReadingMode = (clearReference = false) => {
+    setIsFollowReadingMode(false);
+    setCurrentSentenceIndex(0);
+    setInputMode('text');
+    setViewMode('practice');
+    resetCurrentResult();
+    if (clearReference) {
+      setReferenceText('');
+    }
+  };
+
   const resetResultPanel = () => {
     setResultTab('feedback');
     setShowDiffDetails(false);
@@ -182,6 +238,7 @@ const AudioRecorder = () => {
     setEvaluation(null);
     setScoring(null);
     setTranscription('');
+    setWordAlignment(null);
     setViewMode('processing');
     resetResultPanel();
 
@@ -203,6 +260,7 @@ const AudioRecorder = () => {
       const nextTranscription = analysis?.transcription || data.transcription || '';
 
       setTranscription(nextTranscription);
+      setWordAlignment(analysis?.wordAlignment || null);
 
       if (feedback) {
         setEvaluation({
@@ -297,6 +355,7 @@ const AudioRecorder = () => {
     setEvaluation(null);
     setScoring(null);
     setLastPracticedSentence('');
+    setWordAlignment(null);
     resetResultPanel();
   };
 
@@ -347,11 +406,7 @@ const AudioRecorder = () => {
         <div className="mode-switcher mode-switcher-vertical">
           <button
             className={`mode-button ${inputMode === 'text' ? 'active' : ''}`}
-            onClick={() => {
-              setInputMode('text');
-              setIsFollowReadingMode(false);
-              setViewMode('practice');
-            }}
+            onClick={() => exitFollowReadingMode(false)}
           >
             参考文本
           </button>
@@ -388,6 +443,15 @@ const AudioRecorder = () => {
                 <div className={`pass-chip ${canPassCurrentSentence && hasResult ? 'pass' : 'retry'}`}>
                   {hasResult ? (canPassCurrentSentence ? '上次结果：通过' : '上次结果：建议重读') : '等待本轮评测'}
                 </div>
+              </div>
+
+              <div className="inline-actions">
+                <button className="btn-outline" onClick={() => exitFollowReadingMode(false)}>
+                  退出跟读
+                </button>
+                <button className="btn-secondary" onClick={() => exitFollowReadingMode(true)}>
+                  新建练习句子
+                </button>
               </div>
 
               <div className="focus-sentence-shell">
@@ -610,7 +674,7 @@ const AudioRecorder = () => {
               <div className="comparison-tokens">
                 {comparisonTokens.map((token, index) => (
                   <span key={`${token.text}-${index}`} className={`comparison-token ${token.type}`}>
-                    {token.text}
+                    {token.actualText ? `${token.text} -> ${token.actualText}` : token.text}
                   </span>
                 ))}
               </div>

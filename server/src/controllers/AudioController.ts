@@ -1,22 +1,74 @@
 import { Request, Response } from 'express';
-import { ASRService } from '../services/ASRService';
 import { LLMService } from '../services/LLMService';
 import { TTSService } from '../services/TTSService';
-import { PronunciationResult, ScoringService } from '../services/ScoringService';
+import { AssessmentOrchestrator } from '../services/assessment/AssessmentOrchestrator';
+import { AssessmentResult } from '../services/assessment/types';
 
-const asrService = new ASRService();
 const llmService = new LLMService();
 const ttsService = new TTSService();
-const scoringService = new ScoringService();
+const assessmentOrchestrator = new AssessmentOrchestrator();
 
 const buildRequestId = () => `req_${Date.now()}`;
 
-const buildAnalysis = (transcription: string, scoringResult: PronunciationResult) => ({
-  transcription,
-  pronunciationScore: scoringResult.pronunciation_score ?? 0,
-  prosodyScore: scoringResult.prosody_score ?? 0,
-  confidenceScore: scoringResult.confidence_score ?? 0,
-  pronunciationAnalysis: scoringResult.detailed_feedback || scoringResult.details || '',
+const buildAnalysis = (assessment: AssessmentResult) => ({
+  transcription: assessment.transcription,
+  pronunciationScore: assessment.scores.pronunciation,
+  prosodyScore: assessment.scores.prosody,
+  confidenceScore: assessment.scores.confidence,
+  pronunciationAnalysis: assessment.learnerSafeSummary,
+  sourceBreakdown: {
+    local: {
+      status: assessment.providers.local.status,
+      score: assessment.providers.local.score,
+      confidence: assessment.providers.local.confidence,
+      processingTimeMs: assessment.providers.local.processingTimeMs ?? null,
+    },
+    asr: {
+      status: assessment.providers.asr.status,
+      transcript: assessment.providers.asr.transcript,
+      processingTimeMs: assessment.providers.asr.processingTimeMs ?? null,
+      message: assessment.providers.asr.message || '',
+    },
+    cloud: {
+      status: assessment.providers.cloud.status,
+      pronunciationScore: assessment.providers.cloud.pronunciationScore,
+      prosodyScore: assessment.providers.cloud.prosodyScore,
+      confidenceScore: assessment.providers.cloud.confidenceScore,
+      processingTimeMs: assessment.providers.cloud.processingTimeMs ?? null,
+    },
+  },
+  localProsody: {
+    score: assessment.providers.local.score,
+    confidence: assessment.providers.local.confidence,
+    summary: assessment.providers.local.summary,
+    features: assessment.providers.local.features,
+  },
+  wordAlignment: assessment.wordAlignment,
+  cloudAssessment: {
+    recognizedText: assessment.providers.cloud.recognizedText,
+    details: assessment.providers.cloud.details,
+    message: assessment.providers.cloud.message || '',
+  },
+  fusion: assessment.fusion,
+  warnings: assessment.warnings,
+});
+
+const toLegacyScoring = (assessment: AssessmentResult) => ({
+  // Prefer the fused learner-safe summary because raw provider details may
+  // still contain fallback/no-speech text from a failed side provider.
+  status: assessment.status === 'error' ? 'error' : 'success',
+  recognized_text: assessment.transcription,
+  confidence_score: assessment.scores.confidence,
+  pronunciation_score: assessment.scores.pronunciation,
+  prosody_score: assessment.scores.prosody,
+  details: assessment.learnerSafeSummary || assessment.providers.cloud.details,
+  detailed_feedback: assessment.learnerSafeSummary,
+  message: assessment.warnings[0],
+  raw_response: assessment.providers.cloud.rawResponse,
+  word_alignment: assessment.wordAlignment,
+  providers: assessment.providers,
+  fusion: assessment.fusion,
+  warnings: assessment.warnings,
 });
 
 export const processAudio = async (req: Request, res: Response) => {
@@ -45,23 +97,15 @@ export const processAudio = async (req: Request, res: Response) => {
     const audioBuffer = req.file.buffer;
     const referenceText = req.body.referenceText || '';
 
-    const scoringResult = await scoringService.assessPronunciation(audioBuffer, referenceText);
-
-    let transcription = '';
-
-    if (scoringResult.status === 'success' && scoringResult.recognized_text) {
-      transcription = scoringResult.recognized_text;
-    } else {
-      console.warn('Scoring service failed, using fallback transcription text.');
-      transcription = 'Audio processing failed.';
-    }
+    const assessment = await assessmentOrchestrator.assessAudio(audioBuffer, referenceText);
+    const transcription = assessment.transcription;
 
     console.log(`[AudioController] Transcription obtained: "${transcription.substring(0, 50)}..."`);
     console.log('[AudioController] Starting LLM evaluation...');
-    const evaluation = await llmService.evaluate(transcription, scoringResult);
+    const evaluation = await llmService.evaluate(assessment);
     console.log('[AudioController] LLM evaluation completed.');
 
-    const analysis = buildAnalysis(transcription, scoringResult);
+    const analysis = buildAnalysis(assessment);
     const feedback = {
       overallScore: evaluation.score,
       grammarIssues: evaluation.grammarIssues,
@@ -82,21 +126,21 @@ export const processAudio = async (req: Request, res: Response) => {
       analysis,
       feedback,
       status: {
-        success: scoringResult.status === 'success',
-        message: scoringResult.status === 'success'
+        success: assessment.status !== 'error',
+        message: assessment.status !== 'error'
           ? 'Audio processed successfully'
-          : (scoringResult.message || 'Pronunciation assessment completed with fallback data'),
+          : 'Pronunciation assessment failed across all providers',
       },
-      ...(scoringResult.status !== 'success' ? {
+      ...(assessment.status === 'error' ? {
         error: {
           stage: 'analysis',
-          detail: scoringResult.details || scoringResult.message || 'Unknown scoring error',
+          detail: assessment.warnings.join(' ') || 'Unknown scoring error',
         }
       } : {}),
 
       // Backward-compatible fields for the current client.
       transcription,
-      scoring: scoringResult,
+      scoring: toLegacyScoring(assessment),
       evaluation,
     };
 

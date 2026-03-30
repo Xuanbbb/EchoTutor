@@ -1,82 +1,214 @@
 import axios from 'axios';
 import fs from 'fs/promises';
-import { createReadStream } from 'fs';
 import path from 'path';
 import os from 'os';
 import { exec } from 'child_process';
 import util from 'util';
-import FormData from 'form-data';
+import crypto from 'crypto';
 
 const execAsync = util.promisify(exec);
 
 export class ASRService {
-  private apiKey: string;
-  // Aliyun DashScope OpenAI-compatible endpoint for Audio
-  private baseUrl: string = 'https://dashscope.aliyuncs.com/compatible-mode/v1/audio/transcriptions';
+  private readonly apiKey: string;
+  private readonly appId: string;
+  private readonly accessKey: string;
+  private readonly baseUrl: string;
+  private readonly resourceId: string;
+  private readonly providerName: string;
 
   constructor() {
-    this.apiKey = process.env.DASHSCOPE_API_KEY || '';
-    if (!this.apiKey) {
-      console.warn('ASRService: DASHSCOPE_API_KEY is missing.');
+    const volcApiKey = process.env.VOLCENGINE_SPEECH_API_KEY || process.env.VOLCENGINE_API_KEY || '';
+    const volcAppId = process.env.VOLCENGINE_SPEECH_APP_ID || process.env.VOLCENGINE_APP_ID || '';
+    const volcAccessKey = process.env.VOLCENGINE_SPEECH_ACCESS_KEY || process.env.VOLCENGINE_ACCESS_KEY || '';
+    const dashscopeApiKey = process.env.DASHSCOPE_API_KEY || '';
+
+    if (volcApiKey || (volcAppId && volcAccessKey)) {
+      this.apiKey = volcApiKey;
+      this.appId = volcAppId;
+      this.accessKey = volcAccessKey;
+      this.baseUrl = process.env.VOLCENGINE_SPEECH_BASE_URL || 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash';
+      this.resourceId = process.env.VOLCENGINE_SPEECH_RESOURCE_ID || 'volc.bigasr.auc_turbo';
+      this.providerName = 'Volcengine Ark';
+    } else {
+      this.apiKey = dashscopeApiKey;
+      this.appId = '';
+      this.accessKey = '';
+      this.baseUrl = process.env.DASHSCOPE_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
+      this.resourceId = '';
+      this.providerName = 'DashScope';
+    }
+
+    if (!this.apiKey && !(this.appId && this.accessKey)) {
+      console.warn('ASRService: no speech provider API key is configured.');
     }
   }
 
   async convertToText(audioBuffer: Buffer): Promise<string> {
     const tempInput = path.join(os.tmpdir(), `input_${Date.now()}.wav`);
+
+    try {
+      await fs.writeFile(tempInput, audioBuffer);
+      return await this.convertFileToText(tempInput);
+    } finally {
+      try {
+        await fs.unlink(tempInput).catch(() => {});
+      } catch (e) {}
+    }
+  }
+
+  async convertFileToText(inputAudioPath: string): Promise<string> {
     const tempOutput = path.join(os.tmpdir(), `output_${Date.now()}.wav`);
 
     try {
-      // 1. Save buffer to temp file
-      await fs.writeFile(tempInput, audioBuffer);
-      
-      // 2. Transcode with FFmpeg (Force 16k Mono WAV)
-      const ffmpegPath = 'C:\\ffmpeg-7.1.1-full_build\\bin\\ffmpeg.exe'; 
-      // Safe command construction with quotes
-      const cmd = `"${ffmpegPath}" -y -i "${tempInput}" -ar 16000 -ac 1 -c:a pcm_s16le "${tempOutput}"`;
-      
-      console.log(`[ASRService] Transcoding audio...`);
+      const ffmpegPath = 'C:\\ffmpeg-7.1.1-full_build\\bin\\ffmpeg.exe';
+      const cmd = `"${ffmpegPath}" -y -i "${inputAudioPath}" -ar 16000 -ac 1 -c:a pcm_s16le "${tempOutput}"`;
+
+      console.log('[ASRService] Transcoding audio...');
       try {
-          await execAsync(cmd);
-      } catch (e) {
-          console.warn('[ASRService] Specific FFmpeg path failed, trying global "ffmpeg"...');
-          await execAsync(`ffmpeg -y -i "${tempInput}" -ar 16000 -ac 1 -c:a pcm_s16le "${tempOutput}"`);
+        await execAsync(cmd);
+      } catch (error) {
+        console.warn('[ASRService] Specific FFmpeg path failed, trying global "ffmpeg"...');
+        await execAsync(`ffmpeg -y -i "${inputAudioPath}" -ar 16000 -ac 1 -c:a pcm_s16le "${tempOutput}"`);
       }
 
-      // 3. Call Aliyun SenseVoice via OpenAI Compatible API
-      console.log(`[ASRService] Uploading to Aliyun SenseVoice (OpenAI Compatible)...`);
-      
-      const formData = new FormData();
-      formData.append('file', createReadStream(tempOutput));
-      formData.append('model', 'qwen3-asr-flash');
-      formData.append('language', 'en');
-      formData.append('asr_options', JSON.stringify({ enable_itn: false })); 
-
-      const response = await axios.post(this.baseUrl, formData, {
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          ...formData.getHeaders()
-        },
-        maxBodyLength: Infinity,
-        maxContentLength: Infinity
-      });
-
-      console.log('[ASRService] Transcription response received.');
-      
-      if (response.data && response.data.text) {
-          return response.data.text;
-      } else {
-          throw new Error(`Invalid response: ${JSON.stringify(response.data)}`);
+      const transcript = this.providerName === 'Volcengine Ark'
+        ? await this.transcribeWithVolcengine(tempOutput)
+        : await this.transcribeWithDashScope(tempOutput);
+      if (transcript) {
+        return transcript;
       }
 
+      throw new Error('Speech provider returned an empty transcript.');
     } catch (error: any) {
-      console.error('[ASRService] Error:', error.response?.data || error.message);
-      return "ASR Service error. Please check server logs.";
+      console.error('[ASRService] Error:', {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+        message: error.message,
+      });
+      return 'ASR Service error. Please check server logs.';
     } finally {
-      // Cleanup
       try {
-        await fs.unlink(tempInput).catch(() => {});
         await fs.unlink(tempOutput).catch(() => {});
-      } catch (e) {}
+      } catch (error) {}
     }
+  }
+
+  private async transcribeWithVolcengine(audioPath: string): Promise<string> {
+    console.log('[ASRService] Uploading to Volcengine OpenSpeech...');
+    const audioBuffer = await fs.readFile(audioPath);
+
+    const response = await axios.post(this.baseUrl, {
+      user: {
+        uid: this.appId || 'EchoTutor',
+      },
+      audio: {
+        data: audioBuffer.toString('base64'),
+      },
+      request: {
+        model_name: 'bigmodel',
+        enable_itn: true,
+        enable_punc: false,
+        show_utterances: false,
+        vad_segment: false,
+      },
+    }, {
+      headers: this.buildVolcengineHeaders(),
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+    });
+
+    console.log('[ASRService] Volcengine transcription response received.');
+
+    const statusCode = response.headers['x-api-status-code'];
+    if (statusCode && String(statusCode) !== '20000000') {
+      throw new Error(`Volcengine OpenSpeech error ${statusCode}: ${response.headers['x-api-message'] || 'unknown error'}`);
+    }
+
+    return typeof response.data?.result?.text === 'string' ? response.data.result.text.trim() : '';
+  }
+
+  private async transcribeWithDashScope(audioPath: string): Promise<string> {
+    console.log('[ASRService] Uploading to DashScope...');
+    const audioBuffer = await fs.readFile(audioPath);
+    const audioDataUri = `data:audio/wav;base64,${audioBuffer.toString('base64')}`;
+
+    const response = await axios.post(this.baseUrl, {
+      model: process.env.DASHSCOPE_ASR_MODEL || 'qwen3-asr-flash',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_audio',
+              input_audio: {
+                data: audioDataUri,
+              },
+            },
+            {
+              type: 'text',
+              text: 'Transcribe the spoken English audio faithfully. Return only the transcript text.',
+            },
+          ],
+        },
+      ],
+      stream: false,
+    }, {
+      headers: {
+        'Authorization': `Bearer ${this.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+    });
+
+    console.log('[ASRService] DashScope transcription response received.');
+    return this.extractTranscript(response.data?.choices?.[0]?.message?.content);
+  }
+
+  private buildVolcengineHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'X-Api-Resource-Id': this.resourceId,
+      'X-Api-Request-Id': crypto.randomUUID(),
+      'X-Api-Sequence': '-1',
+    };
+
+    if (this.apiKey) {
+      headers['x-api-key'] = this.apiKey;
+    }
+
+    if (this.appId) {
+      headers['X-Api-App-Key'] = this.appId;
+    }
+
+    if (this.accessKey) {
+      headers['X-Api-Access-Key'] = this.accessKey;
+    }
+
+    return headers;
+  }
+
+  private extractTranscript(content: unknown): string {
+    if (typeof content === 'string') {
+      return content.trim();
+    }
+
+    if (Array.isArray(content)) {
+      return content
+        .map((item) => {
+          if (typeof item === 'string') {
+            return item;
+          }
+          if (item && typeof item === 'object' && 'text' in item && typeof (item as { text?: unknown }).text === 'string') {
+            return ((item as { text: string }).text);
+          }
+          return '';
+        })
+        .join('')
+        .trim();
+    }
+
+    return '';
   }
 }

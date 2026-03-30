@@ -1,5 +1,6 @@
 import axios from 'axios';
-import { PronunciationResult } from '../services/ScoringService';
+import { AssessmentResult } from './assessment/types';
+import { PronunciationGuideService } from './PronunciationGuideService';
 
 export interface EvaluationResult {
   score: number;
@@ -10,7 +11,8 @@ export interface EvaluationResult {
 
 export class LLMService {
   private readonly apiKey: string;
-  private readonly baseUrl: string = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
+  private readonly baseUrl = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
+  private readonly pronunciationGuideService = new PronunciationGuideService();
 
   constructor() {
     this.apiKey = process.env.DASHSCOPE_API_KEY || '';
@@ -19,16 +21,41 @@ export class LLMService {
     }
   }
 
-  async evaluate(text: string, pronunciationResult?: PronunciationResult): Promise<EvaluationResult> {
+  async evaluate(assessment: AssessmentResult): Promise<EvaluationResult> {
     if (!this.apiKey) {
-      return this.getMockResult(text, 'API Key not configured.');
+      return this.getFallbackResult(assessment, 'API Key not configured.');
     }
 
+    const asrSucceeded =
+      assessment.providers.asr.status !== 'error' &&
+      Boolean(assessment.providers.asr.transcript.trim());
+
+    const cloudAnalysis = this.sanitizeProviderText(assessment.providers.cloud.details, asrSucceeded);
+    const localProsodySummary = this.sanitizeProviderText(assessment.providers.local.summary, asrSucceeded);
+    const warnings = asrSucceeded
+      ? assessment.warnings.filter((warning) => !this.looksLikeNoSpeechMessage(warning))
+      : assessment.warnings;
+
     const userPayload = {
-      transcription: text,
-      pronunciation_score: pronunciationResult?.pronunciation_score ?? 0,
-      prosody_score: pronunciationResult?.prosody_score ?? 0,
-      pronunciation_analysis: pronunciationResult?.detailed_feedback?.trim() || '',
+      transcription: assessment.transcription,
+      overall_status: assessment.status,
+      provider_statuses: {
+        asr: assessment.providers.asr.status,
+        local: assessment.providers.local.status,
+        cloud: assessment.providers.cloud.status,
+      },
+      pronunciation_score: assessment.scores.pronunciation,
+      prosody_score: assessment.scores.prosody,
+      confidence_score: assessment.scores.confidence,
+      transcription_source: assessment.fusion.chosenTranscriptionSource,
+      asr_transcript: assessment.providers.asr.transcript.trim(),
+      local_prosody_summary: localProsodySummary,
+      cloud_analysis: cloudAnalysis,
+      fusion_strategy: assessment.fusion.strategy,
+      conflict_flags: assessment.fusion.conflictFlags,
+      warnings,
+      learner_safe_summary: assessment.learnerSafeSummary,
+      word_alignment: assessment.wordAlignment,
     };
 
     const systemContentText = `You are an expert English tutor.
@@ -38,17 +65,32 @@ Your job is to produce the final learner-facing feedback based on structured ups
 Important rules:
 - The transcription is raw ASR output. Do not criticize missing punctuation, capitalization, or sentence segmentation.
 - Ignore obvious ASR noise unless it clearly reflects a real vocabulary or grammar problem.
-- grammarIssues must focus only on true English issues such as tense, word choice, prepositions, and sentence structure.
-- Do not perform a fresh pronunciation diagnosis from scratch. Reuse the provided pronunciation analysis.
+- grammarIssues must focus only on clear English issues such as tense, word choice, prepositions, and sentence structure.
+- Ignore punctuation, capitalization, filler words, and minor ASR artifacts when deciding grammarIssues.
+- Be lenient on grammar. If the sentence is understandable and there is no clear meaning-level grammar mistake, return [].
+- Do not perform a fresh pronunciation diagnosis from scratch. Reuse the provided cloud and local analysis.
+- Never invent evidence, numbers, or provider conclusions that are not explicitly present in the input.
+- If a provider status is error or its analysis text is empty, do not describe any detailed finding as if that provider had produced one.
+- If ASR succeeded, do not say the audio was not recognized, not detected, silent, or ineffective unless the input explicitly says ASR failed.
+- Do not mention exact percentages or numeric thresholds in Chinese feedback unless repeating a score field that is explicitly present in the input.
+- When signals conflict, describe the uncertainty conservatively instead of choosing a dramatic explanation.
+- If overall_status is partial, be conservative and explicitly reflect uncertainty in Chinese feedback.
 - The output must be only one JSON object with no markdown and no extra text.
 
 Return a JSON object with exactly these keys:
-- score: integer 0-100. Use pronunciation_score as the primary basis. Adjust only slightly if the transcription shows obvious language problems.
+- score: integer 0-100. Echo the provided pronunciation/prosody based overall score conservatively. Do not invent a new scoring scheme.
 - grammarIssues: array of Chinese strings. Each string should describe one specific grammar or expression problem. If none, return [].
-- pronunciationFeedback: array of Chinese strings. Convert the provided pronunciation analysis into 1-3 concise learner-facing points. Do not invent unsupported issues.
+- pronunciationFeedback: array of Chinese strings. Return [] because pronunciation feedback is generated by deterministic server rules.
 - correction: string in English. Rewrite the intended sentence naturally with proper punctuation and capitalization. If the transcription is too broken, provide the most conservative repair possible.
 
 Keep the feedback concise, concrete, and useful for a learner.`;
+
+    if (assessment.providers.cloud.status === 'error') {
+      userPayload.warnings = [
+        ...warnings,
+        'Cloud pronunciation evaluation is unavailable for this sample. Do not infer detailed cloud-side pronunciation conclusions.',
+      ];
+    }
 
     try {
       const response = await axios.post(
@@ -61,32 +103,41 @@ Keep the feedback concise, concrete, and useful for a learner.`;
               content: [
                 {
                   type: 'text',
-                  text: systemContentText
-                }
-              ]
+                  text: systemContentText,
+                },
+              ],
             },
             {
               role: 'user',
               content: [
                 {
                   type: 'text',
-                  text: JSON.stringify(userPayload, null, 2)
-                }
-              ]
-            }
+                  text: JSON.stringify(userPayload, null, 2),
+                },
+              ],
+            },
           ],
-          response_format: { type: 'json_object' }
+          response_format: { type: 'json_object' },
         },
         {
           headers: {
-            'Authorization': `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json'
-          }
-        }
+            Authorization: `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+        },
       );
 
       const content = response.data.choices[0].message.content;
-      return JSON.parse(content) as EvaluationResult;
+      const parsed = JSON.parse(content) as EvaluationResult;
+
+      return {
+        score: assessment.scores.overall,
+        grammarIssues: Array.isArray(parsed.grammarIssues) ? parsed.grammarIssues.map(String) : [],
+        pronunciationFeedback: this.buildPronunciationFeedback(assessment),
+        correction: typeof parsed.correction === 'string' && parsed.correction.trim()
+          ? parsed.correction.trim()
+          : assessment.transcription,
+      };
     } catch (error: any) {
       const errorMessage = error.message || '';
       const isProxyIssue = errorMessage.includes('198.18.') || errorMessage.includes('ETIMEDOUT');
@@ -94,20 +145,121 @@ Keep the feedback concise, concrete, and useful for a learner.`;
       if (isProxyIssue) {
         console.error('\n[Network Error] Possible Proxy/VPN Issue Detected');
         console.error('The server is trying to connect to a Fake-IP (often used by Clash/VPNs) but failing.');
-        console.error('Action: Please TURN OFF your VPN/Proxy or configure it to bypass "aliyuncs.com".\n');
+        console.error('Action: Please turn off your VPN/proxy or bypass "aliyuncs.com".\n');
       }
 
       console.error('Error calling Tongyi Qianwen API:', error.response?.data || errorMessage);
-      return this.getMockResult(text, isProxyIssue ? 'Network Error: Check VPN/Proxy' : 'Error calling AI service.');
+      return this.getFallbackResult(
+        assessment,
+        isProxyIssue ? 'Network Error: Check VPN/Proxy' : 'Error calling AI service.',
+      );
     }
   }
 
-  private getMockResult(text: string, note: string): EvaluationResult {
+  private getFallbackResult(assessment: AssessmentResult, note: string): EvaluationResult {
     return {
-      score: 0,
-      grammarIssues: [note],
-      pronunciationFeedback: ['AI evaluation unavailable.'],
-      correction: text
+      score: assessment.scores.overall,
+      grammarIssues: note.startsWith('Error calling') ? [] : [note],
+      pronunciationFeedback: this.buildPronunciationFeedback(assessment),
+      correction: assessment.transcription,
     };
+  }
+
+  private buildPronunciationFeedback(assessment: AssessmentResult): string[] {
+    const feedback: string[] = [];
+    const { local, cloud, asr } = assessment.providers;
+    const alignmentFeedback = this.buildAlignmentFeedback(assessment);
+
+    if (asr.status === 'error' || !asr.transcript.trim()) {
+      return ['本次语音转写不稳定，建议在更安静的环境下重新录制。'];
+    }
+
+    feedback.push(...alignmentFeedback);
+
+    if (cloud.status === 'success' || cloud.status === 'partial') {
+      if (assessment.scores.pronunciation >= 85 && alignmentFeedback.length === 0) {
+        feedback.push('整体发音清晰度较好，咬字基本稳定。');
+      } else if (assessment.scores.pronunciation >= 60 && alignmentFeedback.length === 0) {
+        feedback.push('整体发音基本可识别，但个别词的咬字还可以更稳定。');
+      } else if (assessment.scores.pronunciation > 0 && alignmentFeedback.length === 0) {
+        feedback.push('部分词语的发音清晰度不足，建议放慢一点并把音节读完整。');
+      }
+    }
+
+    if (local.status === 'success' || local.status === 'partial') {
+      const warnings = local.features.warnings.map((warning) => warning.toLowerCase());
+      if (warnings.some((warning) => warning.includes('speech ratio is low') || warning.includes('long pauses'))) {
+        feedback.push('停顿略多，连读时可以再连贯一些。');
+      }
+      if (warnings.some((warning) => warning.includes('average pause is long'))) {
+        feedback.push('句中停顿偏长，短语之间的衔接还可以更顺。');
+      }
+      if (warnings.some((warning) => warning.includes('speech rate appears high'))) {
+        feedback.push('语速略快，适当放慢会更有助于发音清晰。');
+      }
+      if (feedback.length === 0 && local.score >= 80) {
+        feedback.push('节奏表现较稳定，可以继续保持。');
+      }
+    }
+
+    if (cloud.status === 'error' && local.status !== 'error') {
+      feedback.push('本次云端发音评估未完整返回，当前建议主要依据文本对齐和本地节奏分析。');
+    }
+
+    if (feedback.length === 0) {
+      feedback.push('本次已识别到语音，建议结合识别文本继续重复录音微调发音。');
+    }
+
+    return feedback.slice(0, 5);
+  }
+
+  private buildAlignmentFeedback(assessment: AssessmentResult): string[] {
+    const referenceText = assessment.wordAlignment.referenceText.trim();
+    if (!referenceText) {
+      return [];
+    }
+
+    const mismatchTokens = assessment.wordAlignment.tokens
+      .filter((token) => token.status === 'missing' || token.status === 'substituted')
+      .filter((token) => token.expected.trim());
+
+    return mismatchTokens.slice(0, 3).map((token) => {
+      const expected = token.expected.trim().toLowerCase();
+      const ipa = this.pronunciationGuideService.toIpa(expected);
+      if (token.status === 'substituted' && token.actual.trim()) {
+        return `单词 "${expected}" 读得不够准确，当前更像 "${token.actual.trim().toLowerCase()}"，建议读作 /${ipa}/。`;
+      }
+      return `单词 "${expected}" 有漏读或发音不清的问题，建议读作 /${ipa}/。`;
+    });
+  }
+
+  private sanitizeProviderText(text: string, asrSucceeded: boolean): string {
+    const normalized = text.trim();
+    if (!normalized) {
+      return '';
+    }
+
+    if (asrSucceeded && this.looksLikeNoSpeechMessage(normalized)) {
+      return '';
+    }
+
+    return normalized;
+  }
+
+  private looksLikeNoSpeechMessage(text: string): boolean {
+    const normalized = text.trim().toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+
+    return (
+      normalized.includes('no valid speech') ||
+      normalized.includes('silent') ||
+      normalized.includes('silence') ||
+      normalized.includes('未检测到语音') ||
+      normalized.includes('未检测到有效语音') ||
+      normalized.includes('没有有效语音') ||
+      normalized.includes('未被云端服务有效识别')
+    );
   }
 }

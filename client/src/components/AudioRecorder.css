@@ -510,6 +510,8 @@
 }
 
 .processing-layout {
+    display: flex;
+    flex-direction: column;
     min-height: 360px;
     align-items: center;
     justify-content: center;
@@ -545,7 +547,9 @@
 }
 
 .processing-quote {
+    width: min(100%, 520px);
     max-width: 520px;
+    margin: 0 auto;
 }
 
 .result-layout {
