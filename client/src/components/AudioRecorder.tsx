@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useReactMediaRecorder } from 'react-media-recorder';
 import axios from 'axios';
 import './AudioRecorder.css';
+import ScenarioConversationPanel from './ScenarioConversationPanel';
 
 interface EvaluationResult {
   score: number;
@@ -67,12 +68,13 @@ interface DiffToken {
 
 type ViewMode = 'practice' | 'processing' | 'result';
 type ResultTab = 'feedback' | 'correction' | 'transcript';
-type InputMode = 'text' | 'record' | 'upload';
+type InputMode = 'text' | 'record' | 'upload' | 'scenario';
 
 const inputModeLabels: Record<InputMode, string> = {
   text: '输入参考文本',
   record: '录音评测',
   upload: '上传音频文件',
+  scenario: '场景对话',
 };
 
 const splitIntoSentences = (text: string): string[] =>
@@ -422,6 +424,16 @@ const AudioRecorder = () => {
           >
             文件上传
           </button>
+          <button
+            className={`mode-button ${inputMode === 'scenario' ? 'active' : ''}`}
+            onClick={() => {
+              setIsFollowReadingMode(false);
+              setViewMode('practice');
+              setInputMode('scenario');
+            }}
+          >
+            场景对话
+          </button>
         </div>
 
         <div className="practice-content-column">
@@ -559,6 +571,13 @@ const AudioRecorder = () => {
                 </div>
               )}
             </div>
+          )}
+
+          {inputMode === 'scenario' && (
+            <ScenarioConversationPanel
+              playTts={playCorrectionAudio}
+              playingAudio={playingAudio}
+            />
           )}
         </div>
       </div>

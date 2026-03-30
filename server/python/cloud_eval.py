@@ -24,6 +24,21 @@ if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 
 
+def infer_language_hint(reference_text: str) -> str:
+    text = (reference_text or '').strip()
+    if not text:
+        return 'en-US'
+
+    chinese_count = len(re.findall(r'[\u4e00-\u9fff]', text))
+    latin_count = len(re.findall(r'[A-Za-z]', text))
+
+    if chinese_count > latin_count * 1.5:
+        return 'zh-CN'
+    if latin_count > chinese_count * 1.5:
+        return 'en-US'
+    return 'en-US'
+
+
 def normalize_tokens(text: str):
     return [
         token.strip()
@@ -79,7 +94,7 @@ def score_pronunciation(reference_text: str, recognized_text: str):
         return 0, "未检测到清晰可识别的语音内容。"
 
     if not (reference_text or '').strip():
-        return 68, "已完成语音识别，但当前没有参考文本，发音分仅按识别清晰度给出保守估计。"
+        return 68, "已完成英语语音识别。当前发音分主要反映表达清晰度，建议结合识别结果继续优化咬字和节奏。"
 
     alignment = build_alignment(reference_text, recognized_text)
     expected_count = alignment["expected_count"]
@@ -103,7 +118,7 @@ def score_pronunciation(reference_text: str, recognized_text: str):
     return score, detail
 
 
-def transcribe_with_volcengine(audio_path: str) -> str:
+def transcribe_with_volcengine(audio_path: str, reference_text: str = "") -> str:
     base_url = load_env_value("VOLCENGINE_SPEECH_BASE_URL") or "https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash"
     resource_id = load_env_value("VOLCENGINE_SPEECH_RESOURCE_ID") or "volc.bigasr.auc_turbo"
     api_key = load_env_value("VOLCENGINE_SPEECH_API_KEY", "VOLCENGINE_API_KEY")
@@ -134,7 +149,8 @@ def transcribe_with_volcengine(audio_path: str) -> str:
             "uid": app_id or "EchoTutor"
         },
         "audio": {
-            "data": audio_base64
+            "data": audio_base64,
+            **({"language": infer_language_hint(reference_text)} if infer_language_hint(reference_text) else {})
         },
         "request": {
             "model_name": "bigmodel",
@@ -175,7 +191,26 @@ def transcribe_with_volcengine(audio_path: str) -> str:
     return transcript
 
 
-def transcribe_with_dashscope(audio_path: str) -> str:
+def build_dashscope_prompt(language_hint: str) -> str:
+    if language_hint == 'en-US':
+        return (
+            "Transcribe the audio faithfully in English only. "
+            "Do not translate, do not insert Chinese characters, and do not mix Chinese into English output. "
+            "Return only the transcript text."
+        )
+    if language_hint == 'zh-CN':
+        return (
+            "Transcribe the audio faithfully in Simplified Chinese only. "
+            "Do not translate, do not insert English unless it is clearly spoken, and return only the transcript text."
+        )
+    return (
+        "This is an English speaking practice system, so prefer English transcription by default. "
+        "If the speech is clearly entirely Chinese, output Simplified Chinese only. "
+        "Do not translate and do not mix Chinese into English output. Return only the transcript text."
+    )
+
+
+def transcribe_with_dashscope(audio_path: str, reference_text: str = "") -> str:
     api_key = load_api_key()
     if not api_key:
         raise Exception("DashScope API key not found.")
@@ -183,6 +218,7 @@ def transcribe_with_dashscope(audio_path: str) -> str:
     with open(audio_path, "rb") as audio_file:
         audio_base64 = base64.b64encode(audio_file.read()).decode("ascii")
 
+    language_hint = infer_language_hint(reference_text)
     payload = {
         "model": load_env_value("DASHSCOPE_ASR_MODEL") or "qwen3-asr-flash",
         "messages": [
@@ -197,7 +233,7 @@ def transcribe_with_dashscope(audio_path: str) -> str:
                     },
                     {
                         "type": "text",
-                        "text": "Transcribe the spoken English audio faithfully. Return only the transcript text.",
+                        "text": build_dashscope_prompt(language_hint),
                     },
                 ],
             }
@@ -237,13 +273,13 @@ def transcribe_with_dashscope(audio_path: str) -> str:
     return ""
 
 
-def transcribe_audio(audio_path: str) -> str:
+def transcribe_audio(audio_path: str, reference_text: str = "") -> str:
     if load_env_value("VOLCENGINE_SPEECH_API_KEY", "VOLCENGINE_API_KEY") or (
         load_env_value("VOLCENGINE_SPEECH_APP_ID", "VOLCENGINE_APP_ID")
         and load_env_value("VOLCENGINE_SPEECH_ACCESS_KEY", "VOLCENGINE_ACCESS_KEY")
     ):
-        return transcribe_with_volcengine(audio_path)
-    return transcribe_with_dashscope(audio_path)
+        return transcribe_with_volcengine(audio_path, reference_text)
+    return transcribe_with_dashscope(audio_path, reference_text)
 
 
 def evaluate_audio(audio_path, ref_text=""):
@@ -259,7 +295,7 @@ def evaluate_audio(audio_path, ref_text=""):
             "details": "Audio is near silent or no valid speech was detected. Please record again."
         }
 
-    recognized_text = transcribe_audio(abs_audio_path)
+    recognized_text = transcribe_audio(abs_audio_path, ref_text)
     pronunciation_score, details = score_pronunciation(ref_text, recognized_text)
 
     result = {

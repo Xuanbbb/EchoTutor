@@ -56,7 +56,7 @@ export class ASRService {
     }
   }
 
-  async convertFileToText(inputAudioPath: string): Promise<string> {
+  async convertFileToText(inputAudioPath: string, referenceText = ''): Promise<string> {
     const tempOutput = path.join(os.tmpdir(), `output_${Date.now()}.wav`);
 
     try {
@@ -72,8 +72,8 @@ export class ASRService {
       }
 
       const transcript = this.providerName === 'Volcengine Ark'
-        ? await this.transcribeWithVolcengine(tempOutput)
-        : await this.transcribeWithDashScope(tempOutput);
+        ? await this.transcribeWithVolcengine(tempOutput, referenceText)
+        : await this.transcribeWithDashScope(tempOutput, referenceText);
       if (transcript) {
         return transcript;
       }
@@ -94,9 +94,10 @@ export class ASRService {
     }
   }
 
-  private async transcribeWithVolcengine(audioPath: string): Promise<string> {
+  private async transcribeWithVolcengine(audioPath: string, referenceText: string): Promise<string> {
     console.log('[ASRService] Uploading to Volcengine OpenSpeech...');
     const audioBuffer = await fs.readFile(audioPath);
+    const languageHint = this.inferLanguageHint(referenceText);
 
     const response = await axios.post(this.baseUrl, {
       user: {
@@ -104,6 +105,7 @@ export class ASRService {
       },
       audio: {
         data: audioBuffer.toString('base64'),
+        ...(languageHint ? { language: languageHint } : {}),
       },
       request: {
         model_name: 'bigmodel',
@@ -128,10 +130,11 @@ export class ASRService {
     return typeof response.data?.result?.text === 'string' ? response.data.result.text.trim() : '';
   }
 
-  private async transcribeWithDashScope(audioPath: string): Promise<string> {
+  private async transcribeWithDashScope(audioPath: string, referenceText: string): Promise<string> {
     console.log('[ASRService] Uploading to DashScope...');
     const audioBuffer = await fs.readFile(audioPath);
     const audioDataUri = `data:audio/wav;base64,${audioBuffer.toString('base64')}`;
+    const languageHint = this.inferLanguageHint(referenceText);
 
     const response = await axios.post(this.baseUrl, {
       model: process.env.DASHSCOPE_ASR_MODEL || 'qwen3-asr-flash',
@@ -147,7 +150,7 @@ export class ASRService {
             },
             {
               type: 'text',
-              text: 'Transcribe the spoken English audio faithfully. Return only the transcript text.',
+              text: this.buildTranscriptionPrompt(languageHint),
             },
           ],
         },
@@ -210,5 +213,37 @@ export class ASRService {
     }
 
     return '';
+  }
+
+  private inferLanguageHint(referenceText: string): 'en-US' | 'zh-CN' | '' {
+    const text = referenceText.trim();
+    if (!text) {
+      return 'en-US';
+    }
+
+    const chineseMatches = text.match(/[\u4e00-\u9fff]/g) || [];
+    const latinMatches = text.match(/[A-Za-z]/g) || [];
+
+    if (chineseMatches.length > latinMatches.length * 1.5) {
+      return 'zh-CN';
+    }
+
+    if (latinMatches.length > chineseMatches.length * 1.5) {
+      return 'en-US';
+    }
+
+    return 'en-US';
+  }
+
+  private buildTranscriptionPrompt(languageHint: 'en-US' | 'zh-CN' | ''): string {
+    if (languageHint === 'en-US') {
+      return 'Transcribe the audio faithfully in English only. Do not translate, do not insert Chinese characters, and do not mix Chinese into English output. Return only the transcript text.';
+    }
+
+    if (languageHint === 'zh-CN') {
+      return 'Transcribe the audio faithfully in Simplified Chinese only. Do not translate, do not insert English unless it is clearly spoken, and return only the transcript text.';
+    }
+
+    return 'Transcribe the audio faithfully in the language actually spoken. Do not translate. If the speech is entirely English, output English only; if it is entirely Chinese, output Simplified Chinese only. Return only the transcript text.';
   }
 }

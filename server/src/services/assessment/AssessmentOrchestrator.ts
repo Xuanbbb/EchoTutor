@@ -23,7 +23,7 @@ export class AssessmentOrchestrator {
       const [local, cloud, asr] = await Promise.all([
         this.localAnalyzer.analyze(tempFilePath, referenceText),
         this.cloudEvaluator.evaluate(tempFilePath, referenceText),
-        this.asrProvider.transcribe(tempFilePath),
+        this.asrProvider.transcribe(tempFilePath, referenceText),
       ]);
 
       return this.fusionService.fuse(local, cloud, asr, referenceText);

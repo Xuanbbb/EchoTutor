@@ -4,11 +4,11 @@ import { CloudAsrAssessment } from '../types';
 export class CloudAsrProvider {
   constructor(private readonly asrService: ASRService) {}
 
-  async transcribe(audioPath: string): Promise<CloudAsrAssessment> {
+  async transcribe(audioPath: string, referenceText = ''): Promise<CloudAsrAssessment> {
     const startTime = Date.now();
 
     try {
-      const transcript = await this.asrService.convertFileToText(audioPath);
+      const transcript = await this.asrService.convertFileToText(audioPath, referenceText);
       if (!transcript.trim() || transcript.startsWith('ASR Service error')) {
         return {
           status: 'error',
