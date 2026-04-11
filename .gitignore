@@ -3,3 +3,10 @@ node_modules
 .idea
 .vscode
 *.log
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+Thumbs.db
+.env
+.env.*
