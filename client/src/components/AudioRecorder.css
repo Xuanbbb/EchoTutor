@@ -727,6 +727,7 @@
     display: flex;
     flex-direction: column;
     gap: 18px;
+    padding-bottom: 210px;
 }
 
 .scenario-intro,
@@ -813,7 +814,6 @@
     display: flex;
     flex-direction: column;
     min-height: 640px;
-    gap: 16px;
 }
 
 .scenario-chat-stream {
@@ -864,12 +864,32 @@
 }
 
 .scenario-recorder {
-    border-top: 1px solid #efe7de;
-    padding-top: 14px;
+    width: min(1120px, calc(100vw - 32px));
+    margin: 0 auto;
+    background: rgba(255, 253, 248, 0.96);
+    border: 2px dashed #e7ddd2;
+    border-radius: 22px;
+    box-shadow: 0 -10px 30px rgba(96, 77, 49, 0.12);
+    padding: 14px 18px calc(14px + env(safe-area-inset-bottom, 0px));
+    backdrop-filter: blur(14px);
 }
 
 .scenario-status {
     margin-bottom: 10px;
+}
+
+.scenario-recorder-dock {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 12px;
+    z-index: 40;
+    padding: 0 16px;
+    pointer-events: none;
+}
+
+.scenario-recorder-dock .scenario-recorder {
+    pointer-events: auto;
 }
 
 .scenario-side-panel {
@@ -889,6 +909,72 @@
     margin-top: 12px;
 }
 
+.mission-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 14px 0 12px;
+}
+
+.mission-item {
+    border: 1px solid #ece4d9;
+    border-radius: 14px;
+    padding: 12px 13px;
+    background: #fff;
+}
+
+.mission-item.in_progress {
+    border-color: #9ce4fa;
+    background: #f3fbff;
+}
+
+.mission-item.completed {
+    border-color: #9de7ae;
+    background: #f4fff6;
+}
+
+.mission-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 6px;
+}
+
+.mission-description {
+    color: #70675f;
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
+
+.mission-status {
+    border-radius: 999px;
+    padding: 4px 9px;
+    font-size: 0.74rem;
+    background: #f2ede8;
+    color: #7a6d63;
+}
+
+.mission-status.in_progress {
+    background: #dff5ff;
+    color: #2a6980;
+}
+
+.mission-status.completed {
+    background: #dcf6e2;
+    color: #267246;
+}
+
+.mission-complete-banner {
+    margin-bottom: 12px;
+    border-radius: 12px;
+    padding: 10px 12px;
+    background: #ecfbef;
+    color: #226240;
+    font-size: 0.92rem;
+    line-height: 1.5;
+}
+
 .scenario-tag,
 .scenario-score-pill {
     display: inline-flex;
@@ -898,6 +984,21 @@
     background: #fff2df;
     color: #8a5d28;
     font-size: 0.86rem;
+}
+
+@media (max-width: 900px) {
+    .scenario-layout {
+        padding-bottom: 250px;
+    }
+
+    .scenario-chat-shell {
+        grid-template-columns: 1fr;
+    }
+
+    .scenario-recorder {
+        width: calc(100vw - 300px);
+        padding: 12px 14px calc(12px + env(safe-area-inset-bottom, 0px));
+    }
 }
 
 .scenario-score-row {
