@@ -4,7 +4,7 @@ dotenv.config();
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import multer from 'multer';
-import { processAudio, ttsGenerate } from './controllers/AudioController';
+import { getDebugAudio, processAudio, ttsGenerate } from './controllers/AudioController';
 import {
   listScenarios,
   replyScenarioConversation,
@@ -24,6 +24,8 @@ app.use(express.json());
 app.get('/api/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', message: 'EchoTutor Backend is running' });
 });
+
+app.get('/api/debug/audio/:debugId/:stage', getDebugAudio);
 
 // Audio processing route
 app.post('/api/process-audio', upload.single('audio'), processAudio);

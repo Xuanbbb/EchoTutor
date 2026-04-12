@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import { LLMService } from '../services/LLMService';
 import { TTSService } from '../services/TTSService';
+import { audioDebugService, DebugAudioStage } from '../services/AudioDebugService';
+import { audioPreprocessService } from '../services/AudioPreprocessService';
 import { AssessmentOrchestrator } from '../services/assessment/AssessmentOrchestrator';
 import { AssessmentResult } from '../services/assessment/types';
 
@@ -73,6 +75,7 @@ const toLegacyScoring = (assessment: AssessmentResult) => ({
 
 export const processAudio = async (req: Request, res: Response) => {
   const requestId = buildRequestId();
+  const debugAudioId = audioDebugService.createDebugId();
 
   try {
     if (!req.file) {
@@ -96,8 +99,17 @@ export const processAudio = async (req: Request, res: Response) => {
 
     const audioBuffer = req.file.buffer;
     const referenceText = req.body.referenceText || '';
+    const rawExtension = audioPreprocessService.inferExtension(req.file.mimetype, req.file.originalname);
 
-    const assessment = await assessmentOrchestrator.assessAudio(audioBuffer, referenceText);
+    await audioDebugService.saveBuffer(
+      debugAudioId,
+      'raw',
+      audioBuffer,
+      rawExtension,
+      req.file.mimetype || 'application/octet-stream',
+    );
+
+    const assessment = await assessmentOrchestrator.assessAudio(audioBuffer, referenceText, debugAudioId);
     const transcription = assessment.transcription;
 
     console.log(`[AudioController] Transcription obtained: "${transcription.substring(0, 50)}..."`);
@@ -123,6 +135,7 @@ export const processAudio = async (req: Request, res: Response) => {
         referenceText,
         hasAudio: true,
       },
+      debugAudio: audioDebugService.buildResponse(debugAudioId),
       analysis,
       feedback,
       status: {
@@ -164,6 +177,23 @@ export const processAudio = async (req: Request, res: Response) => {
       }
     });
   }
+};
+
+export const getDebugAudio = async (req: Request, res: Response) => {
+  const debugId = typeof req.params.debugId === 'string' ? req.params.debugId : '';
+  const stage = typeof req.params.stage === 'string' ? req.params.stage as DebugAudioStage : null;
+
+  if (!debugId || !stage || !['raw', 'preprocessed', 'asr-input'].includes(stage)) {
+    return res.status(400).json({ error: 'Invalid debug audio request.' });
+  }
+
+  const file = await audioDebugService.getFile(debugId, stage);
+  if (!file) {
+    return res.status(404).json({ error: 'Debug audio not found.' });
+  }
+
+  res.type(file.contentType);
+  return res.sendFile(file.path);
 };
 
 export const ttsGenerate = async (req: Request, res: Response) => {

@@ -203,6 +203,144 @@ const AIRPORT_MISSIONS: ScenarioMission[] = [
   },
 ];
 
+const TAXI_RIDE_MISSIONS: ScenarioMission[] = [
+  {
+    id: 'share_destination',
+    title: 'Share your destination',
+    description: 'Tell the driver where you are going or show the address.',
+  },
+  {
+    id: 'confirm_route_or_time',
+    title: 'Confirm the route or travel time',
+    description: 'Ask about the route, traffic, or how long the ride will take.',
+  },
+  {
+    id: 'state_preference',
+    title: 'State a ride preference',
+    description: 'Mention AC, music, speed, luggage, or another ride preference.',
+  },
+  {
+    id: 'close_the_ride',
+    title: 'Close the ride politely',
+    description: 'Confirm arrival, ask about payment, or thank the driver.',
+  },
+];
+
+const TAXI_DRIVER_MISSIONS: ScenarioMission[] = [
+  {
+    id: 'welcome_passenger',
+    title: 'Welcome the passenger',
+    description: 'Greet the passenger and ask where they are headed.',
+  },
+  {
+    id: 'confirm_destination_or_route',
+    title: 'Confirm destination or route',
+    description: 'Repeat the destination and discuss traffic, route, or travel time.',
+  },
+  {
+    id: 'respond_to_preference',
+    title: 'Respond to a ride preference',
+    description: 'Handle luggage, air conditioning, music, or another passenger request.',
+  },
+  {
+    id: 'finish_trip_politely',
+    title: 'Finish the trip',
+    description: 'Announce arrival, confirm payment, or close the ride politely.',
+  },
+];
+
+const COFFEE_SHOP_MISSIONS: ScenarioMission[] = [
+  {
+    id: 'start_order',
+    title: 'Start the order',
+    description: 'Say what you want to order or ask for the menu/recommendation.',
+  },
+  {
+    id: 'choose_size_or_item_details',
+    title: 'Choose size or item details',
+    description: 'Mention the size, type of drink, or a food item.',
+  },
+  {
+    id: 'add_customization',
+    title: 'Add a customization',
+    description: 'Ask for less sugar, oat milk, ice level, takeaway, or another change.',
+  },
+  {
+    id: 'pay_and_close',
+    title: 'Pay and close',
+    description: 'Confirm the total, payment method, or close the order politely.',
+  },
+];
+
+const BARISTA_MISSIONS: ScenarioMission[] = [
+  {
+    id: 'greet_customer',
+    title: 'Greet the customer',
+    description: 'Welcome the customer and ask what they would like.',
+  },
+  {
+    id: 'confirm_drink_details',
+    title: 'Confirm drink details',
+    description: 'Ask about size, drink type, or food choice.',
+  },
+  {
+    id: 'handle_customization',
+    title: 'Handle customization',
+    description: 'Ask or respond about milk, sugar, ice, takeaway, or other preferences.',
+  },
+  {
+    id: 'take_payment_and_close',
+    title: 'Take payment and close',
+    description: 'Share the total, confirm payment, and finish politely.',
+  },
+];
+
+const CLINIC_VISIT_MISSIONS: ScenarioMission[] = [
+  {
+    id: 'state_reason_for_visit',
+    title: 'State the reason for your visit',
+    description: 'Explain your main symptom or say you need to see a doctor.',
+  },
+  {
+    id: 'describe_symptoms',
+    title: 'Describe your symptoms',
+    description: 'Say what hurts, how long you have felt this way, or how serious it is.',
+  },
+  {
+    id: 'answer_basic_questions',
+    title: 'Answer basic questions',
+    description: 'Talk about fever, medicine, allergies, or other basic health details.',
+  },
+  {
+    id: 'confirm_next_step',
+    title: 'Confirm the next step',
+    description: 'Ask where to wait, what to do next, or close politely.',
+  },
+];
+
+const CLINIC_RECEPTIONIST_MISSIONS: ScenarioMission[] = [
+  {
+    id: 'welcome_patient',
+    title: 'Welcome the patient',
+    description: 'Greet the patient and ask how you can help.',
+  },
+  {
+    id: 'ask_about_symptoms',
+    title: 'Ask about symptoms',
+    description: 'Ask what the problem is and how long it has lasted.',
+  },
+  {
+    id: 'collect_basic_info',
+    title: 'Collect basic information',
+    description: 'Ask about fever, medicine, allergies, or an appointment.',
+  },
+  {
+    id: 'give_next_steps',
+    title: 'Give next steps',
+    description: 'Tell the patient where to wait or what will happen next.',
+  },
+];
+
 const SCENARIOS: ScenarioDefinition[] = [
   {
     id: 'hotel-checkin',
@@ -300,6 +438,105 @@ const SCENARIOS: ScenarioDefinition[] = [
         goal: 'Guide the passenger through check-in, ask about baggage, and confirm seat or gate details.',
         enableMissions: true,
         missions: AIRPORT_AGENT_MISSIONS,
+      },
+    ],
+  },
+  {
+    id: 'taxi-ride',
+    title: 'Taxi Ride',
+    description: 'Practice taking a taxi, giving directions, and discussing ride details.',
+    role: 'You are the passenger. AI is the taxi driver.',
+    goal: 'Share your destination, discuss one ride detail, and finish the trip naturally.',
+    difficulty: 'beginner',
+    openingLine: 'Hello. Where would you like to go today?',
+    keyPoints: ['destination', 'address', 'traffic', 'payment', 'arrival'],
+    missions: TAXI_RIDE_MISSIONS,
+    roleSetups: [
+      {
+        id: 'passenger',
+        label: 'Be the passenger',
+        userRole: 'taxi passenger',
+        assistantRole: 'taxi driver',
+        openingLine: 'Hello. Where would you like to go today?',
+        goal: 'Share your destination, discuss one ride detail, and finish the trip naturally.',
+        enableMissions: true,
+        missions: TAXI_RIDE_MISSIONS,
+      },
+      {
+        id: 'driver',
+        label: 'Be the driver',
+        userRole: 'taxi driver',
+        assistantRole: 'taxi passenger',
+        openingLine: 'Hi. Could you take me to 88 Garden Road, please?',
+        goal: 'Confirm the destination, respond to one passenger request, and finish the ride politely.',
+        enableMissions: true,
+        missions: TAXI_DRIVER_MISSIONS,
+      },
+    ],
+  },
+  {
+    id: 'coffee-shop-order',
+    title: 'Coffee Shop Order',
+    description: 'Practice ordering drinks, asking for customizations, and paying politely.',
+    role: 'You are the customer. AI is the barista.',
+    goal: 'Order a drink, add one customization, and complete the payment naturally.',
+    difficulty: 'beginner',
+    openingLine: 'Hi there. What can I get started for you today?',
+    keyPoints: ['coffee', 'size', 'milk', 'sugar', 'takeaway'],
+    missions: COFFEE_SHOP_MISSIONS,
+    roleSetups: [
+      {
+        id: 'customer',
+        label: 'Be the customer',
+        userRole: 'coffee shop customer',
+        assistantRole: 'barista',
+        openingLine: 'Hi there. What can I get started for you today?',
+        goal: 'Order a drink, add one customization, and complete the payment naturally.',
+        enableMissions: true,
+        missions: COFFEE_SHOP_MISSIONS,
+      },
+      {
+        id: 'barista',
+        label: 'Be the barista',
+        userRole: 'barista',
+        assistantRole: 'coffee shop customer',
+        openingLine: 'Hi. Can I get a latte, please?',
+        goal: 'Take the order, confirm the details, and close the payment politely.',
+        enableMissions: true,
+        missions: BARISTA_MISSIONS,
+      },
+    ],
+  },
+  {
+    id: 'clinic-visit',
+    title: 'Clinic Visit',
+    description: 'Practice explaining symptoms and checking what to do at a clinic.',
+    role: 'You are the patient. AI is the clinic receptionist.',
+    goal: 'Explain your symptoms, answer a few questions, and confirm the next step.',
+    difficulty: 'intermediate',
+    openingLine: 'Good afternoon. How can I help you today?',
+    keyPoints: ['symptoms', 'appointment', 'fever', 'medicine', 'waiting room'],
+    missions: CLINIC_VISIT_MISSIONS,
+    roleSetups: [
+      {
+        id: 'patient',
+        label: 'Be the patient',
+        userRole: 'clinic patient',
+        assistantRole: 'clinic receptionist',
+        openingLine: 'Good afternoon. How can I help you today?',
+        goal: 'Explain your symptoms, answer a few questions, and confirm the next step.',
+        enableMissions: true,
+        missions: CLINIC_VISIT_MISSIONS,
+      },
+      {
+        id: 'receptionist',
+        label: 'Be the receptionist',
+        userRole: 'clinic receptionist',
+        assistantRole: 'clinic patient',
+        openingLine: 'Hi. I have had a sore throat and a fever since yesterday, and I need to see a doctor.',
+        goal: 'Ask about the symptoms, collect basic information, and give a clear next step.',
+        enableMissions: true,
+        missions: CLINIC_RECEPTIONIST_MISSIONS,
       },
     ],
   },
@@ -410,6 +647,30 @@ export class ScenarioConversationService {
 
     if (session.scenario.id === 'airport-checkin' && session.roleSetup.id === 'agent') {
       return this.evaluateAirportAgentMissions(session, userText);
+    }
+
+    if (session.scenario.id === 'taxi-ride' && session.roleSetup.id === 'passenger') {
+      return this.evaluateTaxiPassengerMissions(session, userText);
+    }
+
+    if (session.scenario.id === 'taxi-ride' && session.roleSetup.id === 'driver') {
+      return this.evaluateTaxiDriverMissions(session, userText);
+    }
+
+    if (session.scenario.id === 'coffee-shop-order' && session.roleSetup.id === 'customer') {
+      return this.evaluateCoffeeShopCustomerMissions(session, userText);
+    }
+
+    if (session.scenario.id === 'coffee-shop-order' && session.roleSetup.id === 'barista') {
+      return this.evaluateBaristaMissions(session, userText);
+    }
+
+    if (session.scenario.id === 'clinic-visit' && session.roleSetup.id === 'patient') {
+      return this.evaluateClinicPatientMissions(session, userText);
+    }
+
+    if (session.scenario.id === 'clinic-visit' && session.roleSetup.id === 'receptionist') {
+      return this.evaluateClinicReceptionistMissions(session, userText);
     }
 
     if (session.scenario.id === 'hotel-checkin' && session.roleSetup.id === 'receptionist') {
@@ -609,6 +870,132 @@ export class ScenarioConversationService {
     return justCompleted;
   }
 
+  private evaluateTaxiPassengerMissions(session: ScenarioSession, userText: string): string[] {
+    const normalized = userText.toLowerCase();
+    const justCompleted: string[] = [];
+
+    const tryComplete = (missionId: string, condition: boolean) => {
+      if (!condition || session.completedMissionIds.includes(missionId)) {
+        return;
+      }
+      session.completedMissionIds.push(missionId);
+      justCompleted.push(missionId);
+    };
+
+    tryComplete('share_destination', /\b(go to|take me to|heading to|address|street|road|avenue|airport|hotel|station|mall)\b/.test(normalized));
+    tryComplete('confirm_route_or_time', /\b(route|way|traffic|long|far|minutes|how long|fastest)\b/.test(normalized) || normalized.includes('?'));
+    tryComplete('state_preference', /\b(ac|air conditioning|music|window|luggage|bags|slowly|faster|quiet|stop here)\b/.test(normalized));
+    tryComplete('close_the_ride', /\b(here is fine|we are here|arrived|payment|cash|card|thank you|thanks|keep the change)\b/.test(normalized));
+
+    session.currentMissionId = this.getActiveMissions(session).find((mission) => !session.completedMissionIds.includes(mission.id))?.id || null;
+    return justCompleted;
+  }
+
+  private evaluateTaxiDriverMissions(session: ScenarioSession, userText: string): string[] {
+    const normalized = userText.toLowerCase();
+    const justCompleted: string[] = [];
+
+    const tryComplete = (missionId: string, condition: boolean) => {
+      if (!condition || session.completedMissionIds.includes(missionId)) {
+        return;
+      }
+      session.completedMissionIds.push(missionId);
+      justCompleted.push(missionId);
+    };
+
+    tryComplete('welcome_passenger', /\b(hello|hi|good morning|good afternoon|where would you like to go|hop in)\b/.test(normalized));
+    tryComplete('confirm_destination_or_route', /\b(address|road|street|avenue|airport|station|hotel|traffic|route|minutes|take)\b/.test(normalized));
+    tryComplete('respond_to_preference', /\b(ac|air conditioning|music|luggage|bags|quiet|window|sure|no problem)\b/.test(normalized));
+    tryComplete('finish_trip_politely', /\b(we are here|arrived|payment|cash|card|thank you|have a nice day|take care)\b/.test(normalized));
+
+    session.currentMissionId = this.getActiveMissions(session).find((mission) => !session.completedMissionIds.includes(mission.id))?.id || null;
+    return justCompleted;
+  }
+
+  private evaluateCoffeeShopCustomerMissions(session: ScenarioSession, userText: string): string[] {
+    const normalized = userText.toLowerCase();
+    const justCompleted: string[] = [];
+
+    const tryComplete = (missionId: string, condition: boolean) => {
+      if (!condition || session.completedMissionIds.includes(missionId)) {
+        return;
+      }
+      session.completedMissionIds.push(missionId);
+      justCompleted.push(missionId);
+    };
+
+    tryComplete('start_order', /\b(i('| a)?d like|can i get|may i have|menu|recommend|coffee|latte|tea|espresso|cappuccino)\b/.test(normalized));
+    tryComplete('choose_size_or_item_details', /\b(small|medium|large|hot|iced|latte|americano|mocha|sandwich|muffin|croissant)\b/.test(normalized));
+    tryComplete('add_customization', /\b(oat milk|soy milk|almond milk|less sugar|no sugar|extra shot|ice|no ice|takeaway|to go|for here)\b/.test(normalized));
+    tryComplete('pay_and_close', /\b(card|cash|pay|total|that.?s all|thank you|thanks)\b/.test(normalized));
+
+    session.currentMissionId = this.getActiveMissions(session).find((mission) => !session.completedMissionIds.includes(mission.id))?.id || null;
+    return justCompleted;
+  }
+
+  private evaluateBaristaMissions(session: ScenarioSession, userText: string): string[] {
+    const normalized = userText.toLowerCase();
+    const justCompleted: string[] = [];
+
+    const tryComplete = (missionId: string, condition: boolean) => {
+      if (!condition || session.completedMissionIds.includes(missionId)) {
+        return;
+      }
+      session.completedMissionIds.push(missionId);
+      justCompleted.push(missionId);
+    };
+
+    tryComplete('greet_customer', /\b(hello|hi|welcome|what can i get|what would you like)\b/.test(normalized));
+    tryComplete('confirm_drink_details', /\b(size|small|medium|large|hot|iced|latte|americano|tea|anything to eat)\b/.test(normalized));
+    tryComplete('handle_customization', /\b(milk|sugar|ice|oat|soy|almond|for here|to go|takeaway|extra shot)\b/.test(normalized));
+    tryComplete('take_payment_and_close', /\b(total|that will be|cash|card|ready soon|thank you|have a nice day)\b/.test(normalized));
+
+    session.currentMissionId = this.getActiveMissions(session).find((mission) => !session.completedMissionIds.includes(mission.id))?.id || null;
+    return justCompleted;
+  }
+
+  private evaluateClinicPatientMissions(session: ScenarioSession, userText: string): string[] {
+    const normalized = userText.toLowerCase();
+    const justCompleted: string[] = [];
+
+    const tryComplete = (missionId: string, condition: boolean) => {
+      if (!condition || session.completedMissionIds.includes(missionId)) {
+        return;
+      }
+      session.completedMissionIds.push(missionId);
+      justCompleted.push(missionId);
+    };
+
+    tryComplete('state_reason_for_visit', /\b(see a doctor|not feeling well|sick|appointment|cough|fever|headache|sore throat|stomachache|pain)\b/.test(normalized));
+    tryComplete('describe_symptoms', /\b(since|for two days|for a day|temperature|hurts|pain|cough|fever|runny nose|dizzy|vomit|symptom)\b/.test(normalized));
+    tryComplete('answer_basic_questions', /\b(allergy|allergies|medicine|medication|ibuprofen|paracetamol|no medicine|no allergies)\b/.test(normalized));
+    tryComplete('confirm_next_step', /\b(where should i wait|what should i do next|okay|ok|thank you|thanks|understand)\b/.test(normalized) || normalized.includes('?'));
+
+    session.currentMissionId = this.getActiveMissions(session).find((mission) => !session.completedMissionIds.includes(mission.id))?.id || null;
+    return justCompleted;
+  }
+
+  private evaluateClinicReceptionistMissions(session: ScenarioSession, userText: string): string[] {
+    const normalized = userText.toLowerCase();
+    const justCompleted: string[] = [];
+
+    const tryComplete = (missionId: string, condition: boolean) => {
+      if (!condition || session.completedMissionIds.includes(missionId)) {
+        return;
+      }
+      session.completedMissionIds.push(missionId);
+      justCompleted.push(missionId);
+    };
+
+    tryComplete('welcome_patient', /\b(hello|hi|good morning|good afternoon|how can i help)\b/.test(normalized));
+    tryComplete('ask_about_symptoms', /\b(what seems to be the problem|what happened|how long|symptoms|fever|pain|cough)\b/.test(normalized));
+    tryComplete('collect_basic_info', /\b(allergies|medicine|medication|appointment|insurance|id|temperature)\b/.test(normalized));
+    tryComplete('give_next_steps', /\b(please wait|take a seat|fill out|the doctor will see you|thank you|next)\b/.test(normalized));
+
+    session.currentMissionId = this.getActiveMissions(session).find((mission) => !session.completedMissionIds.includes(mission.id))?.id || null;
+    return justCompleted;
+  }
+
   private createSession(id: string, scenario: ScenarioDefinition, roleSetup: ScenarioRoleSetup): ScenarioSession {
     return {
       id,
@@ -744,7 +1131,7 @@ Rules:
   }
 
   private getFallbackReply(session: ScenarioSession): string {
-    if (session.roleSetup.id === 'receptionist') {
+    if (session.scenario.id === 'hotel-checkin' && session.roleSetup.id === 'receptionist') {
       const turn = session.messages.filter((message) => message.role === 'user').length;
       if (turn === 1) return 'Certainly. May I see your passport, and how many nights will you stay?';
       if (turn === 2) return 'Thank you. Your booking looks fine. Do you need breakfast information or check-out time as well?';
@@ -779,6 +1166,39 @@ Rules:
       if (turn === 1) return 'Sure. Our grilled chicken and pasta are both popular. What would you like?';
       if (turn === 2) return 'Great choice. Would you like anything to drink with that?';
       return 'Perfect. I will place your order now.';
+    }
+
+    if (session.scenario.id === 'taxi-ride') {
+      if (session.roleSetup.id === 'driver') {
+        if (turn === 1) return 'Sure, I can take you there. Would you like the fastest route or the cheaper route?';
+        if (turn === 2) return 'No problem. I can turn on the AC and put your bag in the back.';
+        return 'We have arrived. You can pay by cash or card. Have a nice day.';
+      }
+      if (turn === 1) return 'No problem. Please get in. Could you share the address with me?';
+      if (turn === 2) return 'It should take about twenty minutes because of traffic. Do you have any preference for the route?';
+      return 'We are here now. You can pay by card if you like.';
+    }
+
+    if (session.scenario.id === 'coffee-shop-order') {
+      if (session.roleSetup.id === 'barista') {
+        if (turn === 1) return 'Of course. What size would you like, and would you like it hot or iced?';
+        if (turn === 2) return 'No problem. We can make that with oat milk and less sugar.';
+        return 'That will be ready soon. The total is six dollars. Thank you.';
+      }
+      if (turn === 1) return 'Sure. What size would you like for your drink?';
+      if (turn === 2) return 'We can do that. Would you like regular milk, oat milk, or soy milk?';
+      return 'Your total is ready whenever you are. It will be ready in a few minutes.';
+    }
+
+    if (session.scenario.id === 'clinic-visit') {
+      if (session.roleSetup.id === 'receptionist') {
+        if (turn === 1) return 'I am sorry to hear that. Could you tell me what symptoms you have and how long you have had them?';
+        if (turn === 2) return 'Thank you. Do you have a fever, and are you taking any medicine right now?';
+        return 'Please take a seat in the waiting area. The doctor will call you soon.';
+      }
+      if (turn === 1) return 'Of course. Could you tell me what symptoms you have today?';
+      if (turn === 2) return 'I see. Are you taking any medicine, and do you have any allergies?';
+      return 'Thank you. Please wait over there, and the doctor will see you shortly.';
     }
 
     if (session.roleSetup.id === 'agent') {

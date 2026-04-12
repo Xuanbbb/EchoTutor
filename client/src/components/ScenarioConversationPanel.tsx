@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
-import { useReactMediaRecorder } from 'react-media-recorder';
+import useWarmAudioRecorder from '../hooks/useWarmAudioRecorder';
 
 interface ScenarioDefinition {
   id: string;
@@ -57,7 +57,7 @@ export const ScenarioConversationPanel = ({
   playingAudio,
 }: ScenarioConversationPanelProps) => {
   const { status, startRecording, stopRecording, mediaBlobUrl, clearBlobUrl } =
-    useReactMediaRecorder({ audio: true });
+    useWarmAudioRecorder();
 
   const [scenarios, setScenarios] = useState<ScenarioDefinition[]>([]);
   const [selectedScenario, setSelectedScenario] = useState<ScenarioDefinition | null>(null);

@@ -2,11 +2,9 @@ import axios from 'axios';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
-import { exec } from 'child_process';
-import util from 'util';
 import crypto from 'crypto';
-
-const execAsync = util.promisify(exec);
+import { audioDebugService } from './AudioDebugService';
+import { audioPreprocessService } from './AudioPreprocessService';
 
 export class ASRService {
   private readonly apiKey: string;
@@ -56,19 +54,20 @@ export class ASRService {
     }
   }
 
-  async convertFileToText(inputAudioPath: string, referenceText = ''): Promise<string> {
+  async convertFileToText(inputAudioPath: string, referenceText = '', debugAudioId?: string): Promise<string> {
     const tempOutput = path.join(os.tmpdir(), `output_${Date.now()}.wav`);
 
     try {
-      const ffmpegPath = 'C:\\ffmpeg-7.1.1-full_build\\bin\\ffmpeg.exe';
-      const cmd = `"${ffmpegPath}" -y -i "${inputAudioPath}" -ar 16000 -ac 1 -c:a pcm_s16le "${tempOutput}"`;
-
       console.log('[ASRService] Transcoding audio...');
-      try {
-        await execAsync(cmd);
-      } catch (error) {
-        console.warn('[ASRService] Specific FFmpeg path failed, trying global "ffmpeg"...');
-        await execAsync(`ffmpeg -y -i "${inputAudioPath}" -ar 16000 -ac 1 -c:a pcm_s16le "${tempOutput}"`);
+      await audioPreprocessService.transcodeToPcmWav(inputAudioPath, tempOutput);
+
+      if (debugAudioId) {
+        await audioDebugService.saveFile(
+          debugAudioId,
+          'asr-input',
+          tempOutput,
+          'asr-input.wav',
+        );
       }
 
       const transcript = this.providerName === 'Volcengine Ark'

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { useReactMediaRecorder } from 'react-media-recorder';
 import axios from 'axios';
+import useWarmAudioRecorder from '../hooks/useWarmAudioRecorder';
 import './AudioRecorder.css';
 import ScenarioConversationPanel from './ScenarioConversationPanel';
 
@@ -45,6 +45,14 @@ interface FeedbackResult {
 }
 
 interface ProcessAudioResponse {
+  debugAudio?: {
+    debugId: string;
+    stages: {
+      raw: DebugAudioStage | null;
+      preprocessed: DebugAudioStage | null;
+      asrInput: DebugAudioStage | null;
+    };
+  };
   analysis?: AnalysisResult;
   feedback?: FeedbackResult;
   status?: {
@@ -64,6 +72,12 @@ interface DiffToken {
   text: string;
   type: 'match' | 'missing' | 'extra';
   actualText?: string;
+}
+
+interface DebugAudioStage {
+  url: string;
+  filename: string;
+  contentType: string;
 }
 
 type ViewMode = 'practice' | 'processing' | 'result';
@@ -158,7 +172,7 @@ const buildDiffTokensFromAlignment = (alignment?: AnalysisResult['wordAlignment'
 
 const AudioRecorder = () => {
   const { status, startRecording, stopRecording, mediaBlobUrl, clearBlobUrl } =
-    useReactMediaRecorder({ audio: true });
+    useWarmAudioRecorder();
 
   const [transcription, setTranscription] = useState('');
   const [evaluation, setEvaluation] = useState<EvaluationResult | null>(null);
@@ -175,6 +189,8 @@ const AudioRecorder = () => {
   const [inputMode, setInputMode] = useState<InputMode>('text');
   const [isFollowReadingMode, setIsFollowReadingMode] = useState(false);
   const [wordAlignment, setWordAlignment] = useState<AnalysisResult['wordAlignment'] | null>(null);
+  const [debugAudio, setDebugAudio] = useState<ProcessAudioResponse['debugAudio'] | null>(null);
+  const [lastLocalRecordedAudioUrl, setLastLocalRecordedAudioUrl] = useState('');
 
   const sentences = splitIntoSentences(referenceText);
   const hasSentenceMode = isFollowReadingMode && sentences.length > 0;
@@ -205,6 +221,7 @@ const AudioRecorder = () => {
     setWordAlignment(null);
     setEvaluation(null);
     setScoring(null);
+    setDebugAudio(null);
     setViewMode('practice');
   };
 
@@ -241,6 +258,7 @@ const AudioRecorder = () => {
     setScoring(null);
     setTranscription('');
     setWordAlignment(null);
+    setDebugAudio(null);
     setViewMode('processing');
     resetResultPanel();
 
@@ -261,6 +279,7 @@ const AudioRecorder = () => {
       const feedback = data.feedback;
       const nextTranscription = analysis?.transcription || data.transcription || '';
 
+      setDebugAudio(data.debugAudio || null);
       setTranscription(nextTranscription);
       setWordAlignment(analysis?.wordAlignment || null);
 
@@ -309,6 +328,7 @@ const AudioRecorder = () => {
   const handleSubmitRecorded = async () => {
     if (!mediaBlobUrl) return;
     const blob = await fetch(mediaBlobUrl).then((r) => r.blob());
+    setLastLocalRecordedAudioUrl(mediaBlobUrl);
     await processAudioData(blob, 'recording.wav');
   };
 
@@ -358,6 +378,7 @@ const AudioRecorder = () => {
     setScoring(null);
     setLastPracticedSentence('');
     setWordAlignment(null);
+    setDebugAudio(null);
     resetResultPanel();
   };
 
@@ -668,6 +689,39 @@ const AudioRecorder = () => {
           </button>
         )}
       </div>
+
+      {(lastLocalRecordedAudioUrl || debugAudio?.stages.raw || debugAudio?.stages.preprocessed || debugAudio?.stages.asrInput) && (
+        <div className="comparison-box">
+          <div className="comparison-title">调试音频链路</div>
+          <div className="summary-label">用来判断问题出现在录音采集、后端预处理，还是送入识别前。</div>
+          <div className="feedback-list">
+            {lastLocalRecordedAudioUrl && (
+              <div className="detail-note">
+                <strong>1. 前端刚录完的本地回放</strong>
+                <audio src={lastLocalRecordedAudioUrl} controls className="audio-player" />
+              </div>
+            )}
+            {debugAudio?.stages.raw && (
+              <div className="detail-note">
+                <strong>2. 服务端收到的原始上传音频</strong>
+                <audio src={`http://localhost:3000${debugAudio.stages.raw.url}`} controls className="audio-player" />
+              </div>
+            )}
+            {debugAudio?.stages.preprocessed && (
+              <div className="detail-note">
+                <strong>3. 后端预处理后的音频</strong>
+                <audio src={`http://localhost:3000${debugAudio.stages.preprocessed.url}`} controls className="audio-player" />
+              </div>
+            )}
+            {debugAudio?.stages.asrInput && (
+              <div className="detail-note">
+                <strong>4. 发送给识别模型前的音频</strong>
+                <audio src={`http://localhost:3000${debugAudio.stages.asrInput.url}`} controls className="audio-player" />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {comparisonTokens.length > 0 && (
         <div className="comparison-box">
