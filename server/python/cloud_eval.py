@@ -24,14 +24,31 @@ if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 
 
+SUPPORTED_LANGUAGE_HINTS = {"en-US", "zh-CN", "ko-KR", "ja-JP", "es-ES", "fr-FR"}
+
+
+def normalize_language(language: str, reference_text: str) -> str:
+    if language in SUPPORTED_LANGUAGE_HINTS:
+        return language
+    if language == "auto":
+        return infer_language_hint(reference_text)
+    return infer_language_hint(reference_text)
+
+
 def infer_language_hint(reference_text: str) -> str:
     text = (reference_text or '').strip()
     if not text:
         return 'en-US'
 
     chinese_count = len(re.findall(r'[\u4e00-\u9fff]', text))
-    latin_count = len(re.findall(r'[A-Za-z]', text))
+    japanese_count = len(re.findall(r'[\u3040-\u30ff]', text))
+    korean_count = len(re.findall(r'[\uac00-\ud7af]', text))
+    latin_count = len(re.findall(r'[A-Za-zÀ-ÖØ-öø-ÿ]', text))
 
+    if korean_count > 0 and korean_count >= latin_count:
+        return 'ko-KR'
+    if japanese_count > 0 and japanese_count >= latin_count:
+        return 'ja-JP'
     if chinese_count > latin_count * 1.5:
         return 'zh-CN'
     if latin_count > chinese_count * 1.5:
@@ -39,17 +56,20 @@ def infer_language_hint(reference_text: str) -> str:
     return 'en-US'
 
 
-def normalize_tokens(text: str):
+def normalize_tokens(text: str, language: str = "en-US"):
+    value = (text or '').lower()
+    if language in {"zh-CN", "ja-JP"}:
+        return [char for char in re.sub(r"[^\w]", "", value) if char.strip()]
     return [
         token.strip()
-        for token in re.sub(r"[^\w'\s]", ' ', (text or '').lower()).split()
+        for token in re.sub(r"[^\w'\s]", ' ', value).split()
         if token.strip()
     ]
 
 
-def build_alignment(reference_text: str, recognized_text: str):
-    expected = normalize_tokens(reference_text)
-    actual = normalize_tokens(recognized_text)
+def build_alignment(reference_text: str, recognized_text: str, language: str = "en-US"):
+    expected = normalize_tokens(reference_text, language)
+    actual = normalize_tokens(recognized_text, language)
 
     if not expected and not actual:
         return {"mismatch_count": 0, "match_count": 0, "expected_count": 0, "actual_count": 0}
@@ -88,15 +108,15 @@ def clamp_score(value: float) -> int:
     return max(0, min(100, int(round(value))))
 
 
-def score_pronunciation(reference_text: str, recognized_text: str):
+def score_pronunciation(reference_text: str, recognized_text: str, language: str = "en-US"):
     recognized_text = (recognized_text or '').strip()
     if not recognized_text:
         return 0, "未检测到清晰可识别的语音内容。"
 
     if not (reference_text or '').strip():
-        return 68, "已完成英语语音识别。当前发音分主要反映表达清晰度，建议结合识别结果继续优化咬字和节奏。"
+        return 68, "已完成语音识别。当前发音分主要反映表达清晰度，建议结合识别结果继续优化咬字和节奏。"
 
-    alignment = build_alignment(reference_text, recognized_text)
+    alignment = build_alignment(reference_text, recognized_text, language)
     expected_count = alignment["expected_count"]
     actual_count = alignment["actual_count"]
     mismatch_count = alignment["mismatch_count"]
@@ -118,7 +138,7 @@ def score_pronunciation(reference_text: str, recognized_text: str):
     return score, detail
 
 
-def transcribe_with_volcengine(audio_path: str, reference_text: str = "") -> str:
+def transcribe_with_volcengine(audio_path: str, reference_text: str = "", language: str = "en-US") -> str:
     base_url = load_env_value("VOLCENGINE_SPEECH_BASE_URL") or "https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash"
     resource_id = load_env_value("VOLCENGINE_SPEECH_RESOURCE_ID") or "volc.bigasr.auc_turbo"
     api_key = load_env_value("VOLCENGINE_SPEECH_API_KEY", "VOLCENGINE_API_KEY")
@@ -150,7 +170,7 @@ def transcribe_with_volcengine(audio_path: str, reference_text: str = "") -> str
         },
         "audio": {
             "data": audio_base64,
-            **({"language": infer_language_hint(reference_text)} if infer_language_hint(reference_text) else {})
+            **({"language": normalize_language(language, reference_text)} if normalize_language(language, reference_text) else {})
         },
         "request": {
             "model_name": "bigmodel",
@@ -195,7 +215,8 @@ def build_dashscope_prompt(language_hint: str) -> str:
     if language_hint == 'en-US':
         return (
             "Transcribe the audio faithfully in English only. "
-            "Do not translate, do not insert Chinese characters, and do not mix Chinese into English output. "
+            "If the speaker has a Korean, Japanese, Chinese, Spanish, or French accent but is speaking English, output the intended English words. "
+            "Do not translate, do not output Korean, Japanese, or Chinese characters, and do not mix other languages into English output. "
             "Return only the transcript text."
         )
     if language_hint == 'zh-CN':
@@ -203,14 +224,33 @@ def build_dashscope_prompt(language_hint: str) -> str:
             "Transcribe the audio faithfully in Simplified Chinese only. "
             "Do not translate, do not insert English unless it is clearly spoken, and return only the transcript text."
         )
+    if language_hint == 'ko-KR':
+        return (
+            "Transcribe the audio faithfully in Korean only. "
+            "Do not translate, do not romanize Korean, and return only the transcript text in Hangul when Korean is spoken."
+        )
+    if language_hint == 'ja-JP':
+        return (
+            "Transcribe the audio faithfully in Japanese only. "
+            "Do not translate, do not romanize Japanese, and return only the transcript text in Japanese script."
+        )
+    if language_hint == 'es-ES':
+        return (
+            "Transcribe the audio faithfully in Spanish only. "
+            "Do not translate, do not insert other languages, and return only the transcript text."
+        )
+    if language_hint == 'fr-FR':
+        return (
+            "Transcribe the audio faithfully in French only. "
+            "Do not translate, do not insert other languages, and return only the transcript text."
+        )
     return (
-        "This is an English speaking practice system, so prefer English transcription by default. "
-        "If the speech is clearly entirely Chinese, output Simplified Chinese only. "
-        "Do not translate and do not mix Chinese into English output. Return only the transcript text."
+        "Transcribe the audio faithfully in the language actually spoken. "
+        "Do not translate. Return only the transcript text."
     )
 
 
-def transcribe_with_dashscope(audio_path: str, reference_text: str = "") -> str:
+def transcribe_with_dashscope(audio_path: str, reference_text: str = "", language: str = "en-US") -> str:
     api_key = load_api_key()
     if not api_key:
         raise Exception("DashScope API key not found.")
@@ -218,7 +258,7 @@ def transcribe_with_dashscope(audio_path: str, reference_text: str = "") -> str:
     with open(audio_path, "rb") as audio_file:
         audio_base64 = base64.b64encode(audio_file.read()).decode("ascii")
 
-    language_hint = infer_language_hint(reference_text)
+    language_hint = normalize_language(language, reference_text)
     payload = {
         "model": load_env_value("DASHSCOPE_ASR_MODEL") or "qwen3-asr-flash",
         "messages": [
@@ -273,16 +313,16 @@ def transcribe_with_dashscope(audio_path: str, reference_text: str = "") -> str:
     return ""
 
 
-def transcribe_audio(audio_path: str, reference_text: str = "") -> str:
+def transcribe_audio(audio_path: str, reference_text: str = "", language: str = "en-US") -> str:
     if load_env_value("VOLCENGINE_SPEECH_API_KEY", "VOLCENGINE_API_KEY") or (
         load_env_value("VOLCENGINE_SPEECH_APP_ID", "VOLCENGINE_APP_ID")
         and load_env_value("VOLCENGINE_SPEECH_ACCESS_KEY", "VOLCENGINE_ACCESS_KEY")
     ):
-        return transcribe_with_volcengine(audio_path, reference_text)
-    return transcribe_with_dashscope(audio_path, reference_text)
+        return transcribe_with_volcengine(audio_path, reference_text, language)
+    return transcribe_with_dashscope(audio_path, reference_text, language)
 
 
-def evaluate_audio(audio_path, ref_text=""):
+def evaluate_audio(audio_path, ref_text="", language="en-US"):
     start_time = time.time()
 
     abs_audio_path = sanitize_audio(audio_path)
@@ -295,8 +335,9 @@ def evaluate_audio(audio_path, ref_text=""):
             "details": "Audio is near silent or no valid speech was detected. Please record again."
         }
 
-    recognized_text = transcribe_audio(abs_audio_path, ref_text)
-    pronunciation_score, details = score_pronunciation(ref_text, recognized_text)
+    language_hint = normalize_language(language, ref_text)
+    recognized_text = transcribe_audio(abs_audio_path, ref_text, language_hint)
+    pronunciation_score, details = score_pronunciation(ref_text, recognized_text, language_hint)
 
     result = {
         "status": "success" if recognized_text.strip() else "error",
@@ -320,10 +361,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--audio', type=str, required=True)
     parser.add_argument('--ref_text', type=str, default="", help="Reference text for reading assessment")
+    parser.add_argument('--language', type=str, default="en-US", help="Practice language code")
     args = parser.parse_args()
 
     try:
-        result = evaluate_audio(args.audio, args.ref_text)
+        result = evaluate_audio(args.audio, args.ref_text, args.language)
     except Exception as exc:
         debug_log(f"Cloud evaluation failed: {exc}")
         result = {

@@ -1,6 +1,7 @@
 import path from 'path';
 import { CloudSpeechAssessment } from '../types';
 import { PythonJsonRunner } from '../PythonJsonRunner';
+import { PracticeLanguage } from '../../PracticeLanguage';
 
 export class CloudSpeechEvaluator {
   private readonly runner: PythonJsonRunner;
@@ -10,9 +11,13 @@ export class CloudSpeechEvaluator {
     this.runner = new PythonJsonRunner(scriptPath, 120000);
   }
 
-  async evaluate(audioPath: string, referenceText: string): Promise<CloudSpeechAssessment> {
+  async evaluate(
+    audioPath: string,
+    referenceText: string,
+    language: PracticeLanguage = 'en-US',
+  ): Promise<CloudSpeechAssessment> {
     try {
-      const result = await this.runner.run(['--audio', audioPath, '--ref_text', referenceText]);
+      const result = await this.runner.run(['--audio', audioPath, '--ref_text', referenceText, '--language', language]);
       const assessment: CloudSpeechAssessment = {
         status: this.toStatus(result.status),
         recognizedText: this.toString(result.recognized_text),

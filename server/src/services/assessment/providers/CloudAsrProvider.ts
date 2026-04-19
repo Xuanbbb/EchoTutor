@@ -1,14 +1,20 @@
 import { ASRService } from '../../ASRService';
+import { PracticeLanguage } from '../../PracticeLanguage';
 import { CloudAsrAssessment } from '../types';
 
 export class CloudAsrProvider {
   constructor(private readonly asrService: ASRService) {}
 
-  async transcribe(audioPath: string, referenceText = '', debugAudioId?: string): Promise<CloudAsrAssessment> {
+  async transcribe(
+    audioPath: string,
+    referenceText = '',
+    debugAudioId?: string,
+    language: PracticeLanguage = 'en-US',
+  ): Promise<CloudAsrAssessment> {
     const startTime = Date.now();
 
     try {
-      const transcript = await this.asrService.convertFileToText(audioPath, referenceText, debugAudioId);
+      const transcript = await this.asrService.convertFileToText(audioPath, referenceText, debugAudioId, language);
       if (!transcript.trim() || transcript.startsWith('ASR Service error')) {
         return {
           status: 'error',

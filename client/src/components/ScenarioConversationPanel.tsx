@@ -48,6 +48,7 @@ interface MissionProgressState {
 interface ScenarioConversationPanelProps {
   playTts: (text: string) => Promise<void>;
   playingAudio: boolean;
+  practiceLanguage: string;
 }
 
 const API_BASE = 'http://localhost:3000/api';
@@ -55,6 +56,7 @@ const API_BASE = 'http://localhost:3000/api';
 export const ScenarioConversationPanel = ({
   playTts,
   playingAudio,
+  practiceLanguage,
 }: ScenarioConversationPanelProps) => {
   const { status, startRecording, stopRecording, mediaBlobUrl, clearBlobUrl } =
     useWarmAudioRecorder();
@@ -153,6 +155,7 @@ export const ScenarioConversationPanel = ({
       const blob = await fetch(mediaBlobUrl).then((response) => response.blob());
       const formData = new FormData();
       formData.append('sessionId', sessionId);
+      formData.append('language', practiceLanguage);
       if (selectedScenario) {
         formData.append('scenarioId', selectedScenario.id);
         formData.append('roleSetupId', activeRoleSetup?.id || selectedScenario.roleSetups[0]?.id || '');

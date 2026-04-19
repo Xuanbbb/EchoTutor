@@ -15,10 +15,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--audio', type=str, required=True)
     parser.add_argument('--ref_text', type=str, default="", help="Reference text for reading assessment")
+    parser.add_argument('--language', type=str, default="en-US", help="Practice language code")
     args = parser.parse_args()
 
     try:
-        result = evaluate_audio(args.audio, args.ref_text)
+        result = evaluate_audio(args.audio, args.ref_text, args.language)
     except Exception as exc:
         debug_log(f"Legacy score entry failed: {exc}")
         result = {

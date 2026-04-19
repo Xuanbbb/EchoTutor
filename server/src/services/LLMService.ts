@@ -1,6 +1,11 @@
 import axios from 'axios';
 import { AssessmentResult } from './assessment/types';
 import { PronunciationGuideService } from './PronunciationGuideService';
+import {
+  countScriptCharacters,
+  getPracticeLanguageConfig,
+  isLikelyWrongScript,
+} from './PracticeLanguage';
 
 export interface EvaluationResult {
   score: number;
@@ -28,16 +33,48 @@ export class LLMService {
 
     const asrSucceeded =
       assessment.providers.asr.status !== 'error' &&
-      Boolean(assessment.providers.asr.transcript.trim());
+      Boolean(assessment.providers.asr.transcript.trim()) &&
+      (assessment.fusion.chosenTranscriptionSource === 'asr' || assessment.fusion.chosenTranscriptionSource === 'cloud');
+    const languageConfig = getPracticeLanguageConfig(assessment.language);
+    const rawAsrTranscript = assessment.providers.asr.transcript.trim();
+    const rawCloudTranscript = assessment.providers.cloud.recognizedText.trim();
+    const asrScriptMismatch = isLikelyWrongScript(rawAsrTranscript, assessment.language);
+    const cloudScriptMismatch = isLikelyWrongScript(rawCloudTranscript, assessment.language);
+    const finalScriptMismatch = isLikelyWrongScript(assessment.transcription, assessment.language);
+    const hasLanguageMismatch =
+      asrScriptMismatch ||
+      cloudScriptMismatch ||
+      finalScriptMismatch ||
+      assessment.fusion.conflictFlags.includes('language_mismatch') ||
+      assessment.fusion.conflictFlags.includes('cloud_language_mismatch');
+    const hasUnnaturalTargetLanguage =
+      assessment.naturalness.status === 'unnatural' ||
+      assessment.fusion.conflictFlags.includes('unnatural_target_language');
+    const safeTranscription = hasLanguageMismatch && assessment.wordAlignment.referenceText.trim()
+      ? assessment.wordAlignment.referenceText.trim()
+      : (finalScriptMismatch ? '' : assessment.transcription);
+    const rejectedPhoneticHint = hasLanguageMismatch
+      ? [rawAsrTranscript, rawCloudTranscript]
+        .filter(Boolean)
+        .filter((text, index, values) => values.indexOf(text) === index)
+        .join('\n')
+      : '';
 
-    const cloudAnalysis = this.sanitizeProviderText(assessment.providers.cloud.details, asrSucceeded);
+    const cloudAnalysis = hasLanguageMismatch
+      ? ''
+      : this.sanitizeProviderText(assessment.providers.cloud.details, asrSucceeded);
     const localProsodySummary = this.sanitizeProviderText(assessment.providers.local.summary, asrSucceeded);
     const warnings = asrSucceeded
       ? assessment.warnings.filter((warning) => !this.looksLikeNoSpeechMessage(warning))
       : assessment.warnings;
 
     const userPayload = {
-      transcription: assessment.transcription,
+      transcription: safeTranscription,
+      practice_language: {
+        code: assessment.language,
+        name: languageConfig.englishName,
+        correction_language: languageConfig.correctionLanguage,
+      },
       overall_status: assessment.status,
       provider_statuses: {
         asr: assessment.providers.asr.status,
@@ -48,17 +85,21 @@ export class LLMService {
       prosody_score: assessment.scores.prosody,
       confidence_score: assessment.scores.confidence,
       transcription_source: assessment.fusion.chosenTranscriptionSource,
-      asr_transcript: assessment.providers.asr.transcript.trim(),
+      asr_transcript: asrScriptMismatch ? '' : rawAsrTranscript,
+      cloud_transcript: cloudScriptMismatch ? '' : rawCloudTranscript,
+      rejected_phonetic_asr_hint: rejectedPhoneticHint,
       local_prosody_summary: localProsodySummary,
       cloud_analysis: cloudAnalysis,
       fusion_strategy: assessment.fusion.strategy,
       conflict_flags: assessment.fusion.conflictFlags,
+      language_mismatch_detected: hasLanguageMismatch,
+      target_language_naturalness: assessment.naturalness,
       warnings,
       learner_safe_summary: assessment.learnerSafeSummary,
       word_alignment: assessment.wordAlignment,
     };
 
-    const systemContentText = `You are an expert English tutor.
+    const systemContentText = `You are an expert ${languageConfig.englishName} speaking tutor.
 
 Your job is to produce the final learner-facing feedback based on structured upstream results.
 
@@ -66,6 +107,7 @@ Important rules:
 - The transcription is raw ASR output. Do not criticize missing punctuation, capitalization, or sentence segmentation.
 - Ignore obvious ASR noise unless it clearly reflects a real vocabulary or grammar problem.
 - grammarIssues must focus only on clear English issues such as tense, word choice, prepositions, and sentence structure.
+- For non-English target languages, grammarIssues must focus on clear ${languageConfig.correctionLanguage} expression issues such as word choice, particles, agreement, word order, and sentence structure.
 - Ignore punctuation, capitalization, filler words, and minor ASR artifacts when deciding grammarIssues.
 - Be lenient on grammar. If the sentence is understandable and there is no clear meaning-level grammar mistake, return [].
 - Do not perform a fresh pronunciation diagnosis from scratch. Reuse the provided cloud and local analysis.
@@ -74,6 +116,9 @@ Important rules:
 - If ASR succeeded, do not say the audio was not recognized, not detected, silent, or ineffective unless the input explicitly says ASR failed.
 - Do not mention exact percentages or numeric thresholds in Chinese feedback unless repeating a score field that is explicitly present in the input.
 - When signals conflict, describe the uncertainty conservatively instead of choosing a dramatic explanation.
+- If language_mismatch_detected is true, do not analyze or quote the rejected raw transcript. For English practice, never treat Korean/Japanese/Chinese-script ASR text as English vocabulary or grammar. Return grammarIssues as [] unless the safe transcription itself contains a clear target-language grammar error.
+- If language_mismatch_detected is true and rejected_phonetic_asr_hint is present, you may use it only as a phonetic clue to reconstruct the intended ${languageConfig.correctionLanguage} correction. Do not mention or display the rejected hint in grammarIssues or pronunciationFeedback.
+- If target_language_naturalness.status is "unnatural", grammarIssues must clearly explain in Chinese that the recognized text is not natural ${languageConfig.correctionLanguage}; it may be phonetic transliteration, wrong-language content, or mixed-language content. Do not frame this as a small typo. The correction must rewrite the intended meaning as a natural ${languageConfig.correctionLanguage} sentence.
 - If overall_status is partial, be conservative and explicitly reflect uncertainty in Chinese feedback.
 - The output must be only one JSON object with no markdown and no extra text.
 
@@ -81,7 +126,7 @@ Return a JSON object with exactly these keys:
 - score: integer 0-100. Echo the provided pronunciation/prosody based overall score conservatively. Do not invent a new scoring scheme.
 - grammarIssues: array of Chinese strings. Each string should describe one specific grammar or expression problem. If none, return [].
 - pronunciationFeedback: array of Chinese strings. Return [] because pronunciation feedback is generated by deterministic server rules.
-- correction: string in English. Rewrite the intended sentence naturally with proper punctuation and capitalization. If the transcription is too broken, provide the most conservative repair possible.
+- correction: string in ${languageConfig.correctionLanguage}. Rewrite the intended sentence naturally in the selected practice language with appropriate punctuation and capitalization. Do not translate it into another language. If the transcription is too broken, provide the most conservative repair possible in ${languageConfig.correctionLanguage}.
 
 Keep the feedback concise, concrete, and useful for a learner.`;
 
@@ -129,14 +174,19 @@ Keep the feedback concise, concrete, and useful for a learner.`;
 
       const content = response.data.choices[0].message.content;
       const parsed = JSON.parse(content) as EvaluationResult;
+      const parsedGrammarIssues = Array.isArray(parsed.grammarIssues) ? parsed.grammarIssues.map(String) : [];
 
       return {
         score: assessment.scores.overall,
-        grammarIssues: Array.isArray(parsed.grammarIssues) ? parsed.grammarIssues.map(String) : [],
+        grammarIssues: hasLanguageMismatch && !hasUnnaturalTargetLanguage
+          ? []
+          : this.ensureNaturalnessGrammarIssue(parsedGrammarIssues, assessment),
         pronunciationFeedback: this.buildPronunciationFeedback(assessment),
-        correction: typeof parsed.correction === 'string' && parsed.correction.trim()
+        correction: typeof parsed.correction === 'string' &&
+          parsed.correction.trim() &&
+          !isLikelyWrongScript(parsed.correction, assessment.language)
           ? parsed.correction.trim()
-          : assessment.transcription,
+          : safeTranscription,
       };
     } catch (error: any) {
       const errorMessage = error.message || '';
@@ -165,13 +215,34 @@ Keep the feedback concise, concrete, and useful for a learner.`;
     };
   }
 
+  private ensureNaturalnessGrammarIssue(
+    grammarIssues: string[],
+    assessment: AssessmentResult,
+  ): string[] {
+    if (assessment.naturalness.status !== 'unnatural') {
+      return grammarIssues;
+    }
+
+    const languageConfig = getPracticeLanguageConfig(assessment.language);
+    const issue = assessment.naturalness.issue === 'phonetic_transliteration'
+      ? `当前识别文本更像外语的音译，不是自然的${languageConfig.correctionLanguage}句子。请使用${languageConfig.correctionLanguage}本身的词汇、语序和语法结构来表达。`
+      : `当前内容不像自然的${languageConfig.correctionLanguage}表达，可能混入了其他语言或使用了错误的语言结构。`;
+
+    return [issue, ...grammarIssues].slice(0, 5);
+  }
+
   private buildPronunciationFeedback(assessment: AssessmentResult): string[] {
     const feedback: string[] = [];
     const { local, cloud, asr } = assessment.providers;
     const alignmentFeedback = this.buildAlignmentFeedback(assessment);
 
-    if (asr.status === 'error' || !asr.transcript.trim()) {
-      return ['本次语音转写不稳定，建议在更安静的环境下重新录制。'];
+    if (
+      asr.status === 'error' ||
+      !asr.transcript.trim() ||
+      assessment.fusion.conflictFlags.includes('language_mismatch') ||
+      assessment.fusion.conflictFlags.includes('cloud_language_mismatch')
+    ) {
+      return this.buildLanguageMismatchPronunciationFeedback(assessment);
     }
 
     feedback.push(...alignmentFeedback);
@@ -211,6 +282,38 @@ Keep the feedback concise, concrete, and useful for a learner.`;
     }
 
     return feedback.slice(0, 5);
+  }
+
+  private buildLanguageMismatchPronunciationFeedback(assessment: AssessmentResult): string[] {
+    if (assessment.language !== 'en-US') {
+      return ['本次语音转写不稳定，建议在更安静的环境下重新录制。'];
+    }
+
+    const rawTranscript = [
+      assessment.providers.asr.transcript,
+      assessment.providers.cloud.recognizedText,
+    ].join(' ');
+    const counts = countScriptCharacters(rawTranscript);
+    const dominantScript = counts.korean > 0
+      ? '韩文音译'
+      : counts.chinese > 0
+        ? '中文音译'
+        : counts.japanese > 0
+          ? '日文音译'
+          : '非英语文字';
+    const accentLabel = counts.korean > 0
+      ? '韩式发音特征'
+      : counts.chinese > 0
+        ? '中式发音特征'
+        : counts.japanese > 0
+          ? '日式发音特征'
+          : '母语迁移特征';
+
+    return [
+      `系统把这段英语听成了${dominantScript}，说明当前${accentLabel}比较明显，部分英语音素和重音没有被模型稳定识别为英文。`,
+      '建议先放慢语速，把每个关键词的重读音节读清楚，尤其注意英语里的词尾辅音、长短元音和 /r/、/l/、/v/、/th/ 这类容易被母语音系替代的音。',
+      '练习时可以先逐词跟读目标句，再连成短语；如果一句较长，先拆成 4-6 个词一组录音，会更容易稳定识别成英文。',
+    ];
   }
 
   private buildAlignmentFeedback(assessment: AssessmentResult): string[] {

@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { AssessmentOrchestrator } from '../services/assessment/AssessmentOrchestrator';
 import { LLMService } from '../services/LLMService';
+import { normalizePracticeLanguage } from '../services/PracticeLanguage';
 import {
   ScenarioConversationService,
   ScenarioMissionProgressState,
@@ -68,7 +69,8 @@ export const replyScenarioConversation = async (req: Request, res: Response) => 
       scenarioService.restoreSession(sessionId, scenarioId, roleSetupId, messages, missionProgress);
     }
 
-    const assessment = await assessmentOrchestrator.assessAudio(req.file.buffer, '');
+    const language = normalizePracticeLanguage(req.body.language);
+    const assessment = await assessmentOrchestrator.assessAudio(req.file.buffer, '', undefined, language);
     const evaluation = await llmService.evaluate(assessment);
     const conversation = await scenarioService.reply(sessionId, assessment.transcription);
 

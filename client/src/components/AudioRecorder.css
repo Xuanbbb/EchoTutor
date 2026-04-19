@@ -617,6 +617,24 @@
     margin-bottom: 4px;
 }
 
+.language-select {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: #666;
+    font-size: 0.9rem;
+}
+
+.language-select select {
+    min-width: 110px;
+    border: 1px solid #e5e5e5;
+    border-radius: 8px;
+    background: #fff;
+    color: #333;
+    padding: 8px 10px;
+    font: inherit;
+}
+
 .comparison-legend {
     margin: 16px 0 12px;
 }
@@ -651,6 +669,30 @@
 .comparison-token.extra {
     background: #fff0d9;
     color: #96611f;
+}
+
+.legend-score {
+    background: #eef0ff;
+    color: #4d568f;
+}
+
+.comparison-token.with-score {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.comparison-token.with-score strong {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    height: 22px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.72);
+    font-size: 0.78rem;
+    line-height: 1;
 }
 
 .feedback-panel {

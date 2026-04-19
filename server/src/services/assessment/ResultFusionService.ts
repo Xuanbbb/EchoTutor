@@ -1,7 +1,14 @@
 import { AssessmentResult, CloudAsrAssessment, CloudSpeechAssessment, LocalProsodyAssessment } from './types';
 import { WordAlignmentService } from './WordAlignmentService';
+import { isLikelyWrongScript, PracticeLanguage } from '../PracticeLanguage';
+import { assessTargetLanguageNaturalness } from '../TargetLanguageNaturalness';
 
 const roundScore = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
+const emptyWordTiming = {
+  status: 'error' as const,
+  summary: '',
+  words: [],
+};
 
 export class ResultFusionService {
   private readonly wordAlignmentService = new WordAlignmentService();
@@ -11,16 +18,29 @@ export class ResultFusionService {
     cloud: CloudSpeechAssessment,
     asr: CloudAsrAssessment,
     referenceText: string,
+    language: PracticeLanguage = 'en-US',
   ): AssessmentResult {
     const conflictFlags: string[] = [];
     const localSucceeded = local.status !== 'error';
     const cloudSucceeded = cloud.status !== 'error';
-    const asrSucceeded = asr.status !== 'error' && Boolean(asr.transcript.trim());
+    const asrSucceeded =
+      asr.status !== 'error' &&
+      Boolean(asr.transcript.trim()) &&
+      !isLikelyWrongScript(asr.transcript, language);
     const warnings = this.normalizeWarnings(local.features.warnings, asrSucceeded);
-    const finalTranscription = asrSucceeded ? asr.transcript : cloud.recognizedText;
+    const cloudTranscriptUsable =
+      Boolean(cloud.recognizedText.trim()) &&
+      !isLikelyWrongScript(cloud.recognizedText, language);
+    const finalTranscriptChoice = this.chooseFinalTranscription(
+      asrSucceeded ? asr.transcript : '',
+      cloudTranscriptUsable ? cloud.recognizedText : '',
+      referenceText,
+    );
+    const finalTranscription = finalTranscriptChoice.transcription;
+    const naturalness = assessTargetLanguageNaturalness(finalTranscription, language);
     const buildWordAlignment = (transcription: string) => ({
       referenceText,
-      ...this.wordAlignmentService.align(referenceText, transcription),
+      ...this.wordAlignmentService.align(referenceText, transcription, language),
     });
 
     if (
@@ -30,6 +50,21 @@ export class ResultFusionService {
     ) {
       conflictFlags.push('transcript_gap');
       warnings.push('ASR transcript differs from evaluation transcript.');
+    }
+
+    if (asr.status !== 'error' && asr.transcript.trim() && !asrSucceeded) {
+      conflictFlags.push('language_mismatch');
+      warnings.push('ASR transcript appears to use a different script from the selected practice language.');
+    }
+
+    if (cloud.recognizedText.trim() && !cloudTranscriptUsable) {
+      conflictFlags.push('cloud_language_mismatch');
+      warnings.push('Cloud evaluation transcript appears to use a different script from the selected practice language.');
+    }
+
+    if (naturalness.status === 'unnatural') {
+      conflictFlags.push('unnatural_target_language');
+      warnings.push(naturalness.reason);
     }
 
     if (localSucceeded && cloudSucceeded) {
@@ -44,6 +79,7 @@ export class ResultFusionService {
 
       return {
         status: conflictFlags.length > 0 ? 'partial' : 'success',
+        language,
         transcription: finalTranscription,
         scores: {
           pronunciation: cloud.pronunciationScore,
@@ -56,9 +92,13 @@ export class ResultFusionService {
           cloud,
           asr,
         },
+        wordTiming: emptyWordTiming,
+        naturalness,
         fusion: {
-          strategy: asrSucceeded ? 'asr_primary' : (conflictFlags.length > 0 ? 'blended' : 'cloud_primary'),
-          chosenTranscriptionSource: asrSucceeded ? 'asr' : 'cloud',
+          strategy: finalTranscriptChoice.source === 'asr'
+            ? 'asr_primary'
+            : (conflictFlags.length > 0 ? 'blended' : 'cloud_primary'),
+          chosenTranscriptionSource: finalTranscriptChoice.source,
           scoreWeights: {
             localProsody: 0.6,
             cloudProsody: 0.4,
@@ -76,7 +116,8 @@ export class ResultFusionService {
 
       return {
         status: 'partial',
-        transcription: '',
+        language,
+        transcription: finalTranscription,
         scores: {
           pronunciation: 0,
           prosody: local.score,
@@ -88,9 +129,11 @@ export class ResultFusionService {
           cloud,
           asr,
         },
+        wordTiming: emptyWordTiming,
+        naturalness,
         fusion: {
           strategy: 'local_fallback',
-          chosenTranscriptionSource: 'none',
+          chosenTranscriptionSource: finalTranscriptChoice.source,
           scoreWeights: {
             localProsody: 1,
             cloudProsody: 0,
@@ -99,7 +142,7 @@ export class ResultFusionService {
         },
         warnings,
         learnerSafeSummary: this.buildLearnerSummary(local, cloud, warnings, asrSucceeded),
-        wordAlignment: buildWordAlignment(''),
+        wordAlignment: buildWordAlignment(finalTranscription),
       };
     }
 
@@ -108,6 +151,7 @@ export class ResultFusionService {
 
       return {
         status: cloud.status,
+        language,
         transcription: finalTranscription,
         scores: {
           pronunciation: cloud.pronunciationScore,
@@ -120,9 +164,11 @@ export class ResultFusionService {
           cloud,
           asr,
         },
+        wordTiming: emptyWordTiming,
+        naturalness,
         fusion: {
-          strategy: asrSucceeded ? 'asr_primary' : 'cloud_only',
-          chosenTranscriptionSource: asrSucceeded ? 'asr' : 'cloud',
+          strategy: finalTranscriptChoice.source === 'asr' ? 'asr_primary' : 'cloud_only',
+          chosenTranscriptionSource: finalTranscriptChoice.source,
           scoreWeights: {
             localProsody: 0,
             cloudProsody: 1,
@@ -139,6 +185,7 @@ export class ResultFusionService {
 
     return {
       status: 'error',
+      language,
       transcription: '',
       scores: {
         pronunciation: 0,
@@ -151,6 +198,8 @@ export class ResultFusionService {
         cloud,
         asr,
       },
+      wordTiming: emptyWordTiming,
+      naturalness,
       fusion: {
         strategy: 'failed',
         chosenTranscriptionSource: 'none',
@@ -172,6 +221,26 @@ export class ResultFusionService {
     }
 
     return warnings.filter((warning) => !this.looksLikeNoSpeechMessage(warning));
+  }
+
+  private chooseFinalTranscription(
+    asrTranscript: string,
+    cloudTranscript: string,
+    referenceText: string,
+  ): { transcription: string; source: AssessmentResult['fusion']['chosenTranscriptionSource'] } {
+    if (asrTranscript.trim()) {
+      return { transcription: asrTranscript.trim(), source: 'asr' };
+    }
+
+    if (cloudTranscript.trim()) {
+      return { transcription: cloudTranscript.trim(), source: 'cloud' };
+    }
+
+    if (referenceText.trim()) {
+      return { transcription: referenceText.trim(), source: 'reference' };
+    }
+
+    return { transcription: '', source: 'none' };
   }
 
   private buildLearnerSummary(

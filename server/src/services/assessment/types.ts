@@ -1,3 +1,6 @@
+import { PracticeLanguage } from '../PracticeLanguage';
+import { TargetLanguageNaturalness } from '../TargetLanguageNaturalness';
+
 export type ProviderStatus = 'success' | 'partial' | 'error';
 
 export interface LocalProsodyFeatures {
@@ -16,6 +19,25 @@ export interface WordAlignmentToken {
   expected: string;
   actual: string;
   status: WordAlignmentStatus;
+}
+
+export interface WordTimingAssessmentWord {
+  expected: string;
+  actual: string;
+  status: WordAlignmentStatus;
+  startMs: number | null;
+  endMs: number | null;
+  score: number;
+  ipa?: string;
+  note?: string;
+}
+
+export interface WordTimingAssessment {
+  status: ProviderStatus;
+  summary: string;
+  words: WordTimingAssessmentWord[];
+  processingTimeMs?: number;
+  message?: string;
 }
 
 export interface LocalProsodyAssessment {
@@ -57,6 +79,7 @@ export type FusionStrategy =
 
 export interface AssessmentResult {
   status: ProviderStatus;
+  language: PracticeLanguage;
   transcription: string;
   scores: {
     pronunciation: number;
@@ -69,9 +92,11 @@ export interface AssessmentResult {
     cloud: CloudSpeechAssessment;
     asr: CloudAsrAssessment;
   };
+  wordTiming: WordTimingAssessment;
+  naturalness: TargetLanguageNaturalness;
   fusion: {
     strategy: FusionStrategy;
-    chosenTranscriptionSource: 'asr' | 'cloud' | 'none';
+    chosenTranscriptionSource: 'asr' | 'cloud' | 'reference' | 'none';
     scoreWeights: {
       localProsody: number;
       cloudProsody: number;

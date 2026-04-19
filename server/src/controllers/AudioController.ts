@@ -5,6 +5,7 @@ import { audioDebugService, DebugAudioStage } from '../services/AudioDebugServic
 import { audioPreprocessService } from '../services/AudioPreprocessService';
 import { AssessmentOrchestrator } from '../services/assessment/AssessmentOrchestrator';
 import { AssessmentResult } from '../services/assessment/types';
+import { normalizePracticeLanguage } from '../services/PracticeLanguage';
 
 const llmService = new LLMService();
 const ttsService = new TTSService();
@@ -13,6 +14,7 @@ const assessmentOrchestrator = new AssessmentOrchestrator();
 const buildRequestId = () => `req_${Date.now()}`;
 
 const buildAnalysis = (assessment: AssessmentResult) => ({
+  language: assessment.language,
   transcription: assessment.transcription,
   pronunciationScore: assessment.scores.pronunciation,
   prosodyScore: assessment.scores.prosody,
@@ -46,6 +48,8 @@ const buildAnalysis = (assessment: AssessmentResult) => ({
     features: assessment.providers.local.features,
   },
   wordAlignment: assessment.wordAlignment,
+  wordTiming: assessment.wordTiming,
+  naturalness: assessment.naturalness,
   cloudAssessment: {
     recognizedText: assessment.providers.cloud.recognizedText,
     details: assessment.providers.cloud.details,
@@ -99,6 +103,7 @@ export const processAudio = async (req: Request, res: Response) => {
 
     const audioBuffer = req.file.buffer;
     const referenceText = req.body.referenceText || '';
+    const language = normalizePracticeLanguage(req.body.language);
     const rawExtension = audioPreprocessService.inferExtension(req.file.mimetype, req.file.originalname);
 
     await audioDebugService.saveBuffer(
@@ -109,7 +114,7 @@ export const processAudio = async (req: Request, res: Response) => {
       req.file.mimetype || 'application/octet-stream',
     );
 
-    const assessment = await assessmentOrchestrator.assessAudio(audioBuffer, referenceText, debugAudioId);
+    const assessment = await assessmentOrchestrator.assessAudio(audioBuffer, referenceText, debugAudioId, language);
     const transcription = assessment.transcription;
 
     console.log(`[AudioController] Transcription obtained: "${transcription.substring(0, 50)}..."`);
@@ -133,6 +138,7 @@ export const processAudio = async (req: Request, res: Response) => {
       },
       input: {
         referenceText,
+        language: assessment.language,
         hasAudio: true,
       },
       debugAudio: audioDebugService.buildResponse(debugAudioId),

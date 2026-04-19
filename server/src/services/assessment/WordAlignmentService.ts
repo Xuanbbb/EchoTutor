@@ -1,6 +1,7 @@
 import { WordAlignmentToken } from './types';
+import { getPracticeLanguageConfig, PracticeLanguage } from '../PracticeLanguage';
 
-const normalizeForAlignment = (text: string): string[] =>
+const normalizeWordTokens = (text: string): string[] =>
   text
     .toLowerCase()
     .replace(/[^\p{L}\p{N}'\s]/gu, ' ')
@@ -8,13 +9,45 @@ const normalizeForAlignment = (text: string): string[] =>
     .map((token) => token.trim())
     .filter(Boolean);
 
+const normalizeCharacterTokens = (text: string): string[] =>
+  Array.from(
+    text
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]/gu, ''),
+  ).filter(Boolean);
+
+const normalizeForAlignment = (text: string, language: PracticeLanguage): string[] => {
+  const config = getPracticeLanguageConfig(language);
+
+  if (config.tokenization === 'cjk-char') {
+    return normalizeCharacterTokens(text);
+  }
+
+  return normalizeWordTokens(text);
+};
+
 export class WordAlignmentService {
-  align(referenceText: string, transcription: string): { tokens: WordAlignmentToken[]; mismatchCount: number } {
-    const expectedTokens = normalizeForAlignment(referenceText);
-    const actualTokens = normalizeForAlignment(transcription);
+  align(
+    referenceText: string,
+    transcription: string,
+    language: PracticeLanguage = 'en-US',
+  ): { tokens: WordAlignmentToken[]; mismatchCount: number } {
+    const expectedTokens = normalizeForAlignment(referenceText, language);
+    const actualTokens = normalizeForAlignment(transcription, language);
 
     if (expectedTokens.length === 0 && actualTokens.length === 0) {
       return { tokens: [], mismatchCount: 0 };
+    }
+
+    if (expectedTokens.length === 0 && actualTokens.length > 0) {
+      return {
+        tokens: actualTokens.map((token) => ({
+          expected: token,
+          actual: token,
+          status: 'match' as const,
+        })),
+        mismatchCount: 0,
+      };
     }
 
     const dp = this.buildEditTable(expectedTokens, actualTokens);

@@ -5,6 +5,11 @@ import os from 'os';
 import crypto from 'crypto';
 import { audioDebugService } from './AudioDebugService';
 import { audioPreprocessService } from './AudioPreprocessService';
+import {
+  getPracticeLanguageConfig,
+  PracticeLanguage,
+  resolvePracticeLanguage,
+} from './PracticeLanguage';
 
 export class ASRService {
   private readonly apiKey: string;
@@ -41,12 +46,12 @@ export class ASRService {
     }
   }
 
-  async convertToText(audioBuffer: Buffer): Promise<string> {
+  async convertToText(audioBuffer: Buffer, language: PracticeLanguage = 'en-US'): Promise<string> {
     const tempInput = path.join(os.tmpdir(), `input_${Date.now()}.wav`);
 
     try {
       await fs.writeFile(tempInput, audioBuffer);
-      return await this.convertFileToText(tempInput);
+      return await this.convertFileToText(tempInput, '', undefined, language);
     } finally {
       try {
         await fs.unlink(tempInput).catch(() => {});
@@ -54,7 +59,12 @@ export class ASRService {
     }
   }
 
-  async convertFileToText(inputAudioPath: string, referenceText = '', debugAudioId?: string): Promise<string> {
+  async convertFileToText(
+    inputAudioPath: string,
+    referenceText = '',
+    debugAudioId?: string,
+    language: PracticeLanguage = 'en-US',
+  ): Promise<string> {
     const tempOutput = path.join(os.tmpdir(), `output_${Date.now()}.wav`);
 
     try {
@@ -70,9 +80,10 @@ export class ASRService {
         );
       }
 
+      const resolvedLanguage = resolvePracticeLanguage(language, referenceText);
       const transcript = this.providerName === 'Volcengine Ark'
-        ? await this.transcribeWithVolcengine(tempOutput, referenceText)
-        : await this.transcribeWithDashScope(tempOutput, referenceText);
+        ? await this.transcribeWithVolcengine(tempOutput, referenceText, resolvedLanguage)
+        : await this.transcribeWithDashScope(tempOutput, referenceText, resolvedLanguage);
       if (transcript) {
         return transcript;
       }
@@ -93,10 +104,14 @@ export class ASRService {
     }
   }
 
-  private async transcribeWithVolcengine(audioPath: string, referenceText: string): Promise<string> {
+  private async transcribeWithVolcengine(
+    audioPath: string,
+    referenceText: string,
+    language: PracticeLanguage,
+  ): Promise<string> {
     console.log('[ASRService] Uploading to Volcengine OpenSpeech...');
     const audioBuffer = await fs.readFile(audioPath);
-    const languageHint = this.inferLanguageHint(referenceText);
+    const languageHint = this.inferLanguageHint(referenceText, language);
 
     const response = await axios.post(this.baseUrl, {
       user: {
@@ -129,11 +144,15 @@ export class ASRService {
     return typeof response.data?.result?.text === 'string' ? response.data.result.text.trim() : '';
   }
 
-  private async transcribeWithDashScope(audioPath: string, referenceText: string): Promise<string> {
+  private async transcribeWithDashScope(
+    audioPath: string,
+    referenceText: string,
+    language: PracticeLanguage,
+  ): Promise<string> {
     console.log('[ASRService] Uploading to DashScope...');
     const audioBuffer = await fs.readFile(audioPath);
     const audioDataUri = `data:audio/wav;base64,${audioBuffer.toString('base64')}`;
-    const languageHint = this.inferLanguageHint(referenceText);
+    const languageHint = this.inferLanguageHint(referenceText, language);
 
     const response = await axios.post(this.baseUrl, {
       model: process.env.DASHSCOPE_ASR_MODEL || 'qwen3-asr-flash',
@@ -214,35 +233,39 @@ export class ASRService {
     return '';
   }
 
-  private inferLanguageHint(referenceText: string): 'en-US' | 'zh-CN' | '' {
-    const text = referenceText.trim();
-    if (!text) {
-      return 'en-US';
-    }
-
-    const chineseMatches = text.match(/[\u4e00-\u9fff]/g) || [];
-    const latinMatches = text.match(/[A-Za-z]/g) || [];
-
-    if (chineseMatches.length > latinMatches.length * 1.5) {
-      return 'zh-CN';
-    }
-
-    if (latinMatches.length > chineseMatches.length * 1.5) {
-      return 'en-US';
-    }
-
-    return 'en-US';
+  private inferLanguageHint(
+    referenceText: string,
+    language: PracticeLanguage,
+  ): 'en-US' | 'zh-CN' | 'ko-KR' | 'ja-JP' | 'es-ES' | 'fr-FR' | '' {
+    const resolvedLanguage = resolvePracticeLanguage(language, referenceText);
+    return getPracticeLanguageConfig(resolvedLanguage).asrHint;
   }
 
-  private buildTranscriptionPrompt(languageHint: 'en-US' | 'zh-CN' | ''): string {
+  private buildTranscriptionPrompt(languageHint: 'en-US' | 'zh-CN' | 'ko-KR' | 'ja-JP' | 'es-ES' | 'fr-FR' | ''): string {
     if (languageHint === 'en-US') {
-      return 'Transcribe the audio faithfully in English only. Do not translate, do not insert Chinese characters, and do not mix Chinese into English output. Return only the transcript text.';
+      return 'Transcribe the audio faithfully in English only. If the speaker has a Korean, Japanese, Chinese, Spanish, or French accent but is speaking English, output the intended English words. Do not translate, do not output Korean, Japanese, or Chinese characters, and do not mix other languages into the English output. Return only the transcript text.';
     }
 
     if (languageHint === 'zh-CN') {
       return 'Transcribe the audio faithfully in Simplified Chinese only. Do not translate, do not insert English unless it is clearly spoken, and return only the transcript text.';
     }
 
-    return 'Transcribe the audio faithfully in the language actually spoken. Do not translate. If the speech is entirely English, output English only; if it is entirely Chinese, output Simplified Chinese only. Return only the transcript text.';
+    if (languageHint === 'ko-KR') {
+      return 'Transcribe the audio faithfully in Korean only. Do not translate, do not romanize Korean, and return only the transcript text in Hangul when Korean is spoken.';
+    }
+
+    if (languageHint === 'ja-JP') {
+      return 'Transcribe the audio faithfully in Japanese only. Do not translate, do not romanize Japanese, and return only the transcript text in Japanese script.';
+    }
+
+    if (languageHint === 'es-ES') {
+      return 'Transcribe the audio faithfully in Spanish only. Do not translate, do not insert other languages, and return only the transcript text.';
+    }
+
+    if (languageHint === 'fr-FR') {
+      return 'Transcribe the audio faithfully in French only. Do not translate, do not insert other languages, and return only the transcript text.';
+    }
+
+    return 'Transcribe the audio faithfully in the language actually spoken. Do not translate. Return only the transcript text.';
   }
 }

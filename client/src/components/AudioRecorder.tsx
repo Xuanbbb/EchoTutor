@@ -35,6 +35,20 @@ interface AnalysisResult {
       status: 'match' | 'missing' | 'extra' | 'substituted';
     }>;
   };
+  wordTiming?: {
+    status: 'success' | 'partial' | 'error';
+    summary: string;
+    words: Array<{
+      expected: string;
+      actual: string;
+      status: 'match' | 'missing' | 'extra' | 'substituted';
+      startMs: number | null;
+      endMs: number | null;
+      score: number;
+      ipa?: string;
+      note?: string;
+    }>;
+  };
 }
 
 interface FeedbackResult {
@@ -45,14 +59,6 @@ interface FeedbackResult {
 }
 
 interface ProcessAudioResponse {
-  debugAudio?: {
-    debugId: string;
-    stages: {
-      raw: DebugAudioStage | null;
-      preprocessed: DebugAudioStage | null;
-      asrInput: DebugAudioStage | null;
-    };
-  };
   analysis?: AnalysisResult;
   feedback?: FeedbackResult;
   status?: {
@@ -72,17 +78,15 @@ interface DiffToken {
   text: string;
   type: 'match' | 'missing' | 'extra';
   actualText?: string;
-}
-
-interface DebugAudioStage {
-  url: string;
-  filename: string;
-  contentType: string;
+  score?: number;
+  ipa?: string;
+  note?: string;
 }
 
 type ViewMode = 'practice' | 'processing' | 'result';
 type ResultTab = 'feedback' | 'correction' | 'transcript';
 type InputMode = 'text' | 'record' | 'upload' | 'scenario';
+type PracticeLanguage = 'auto' | 'en-US' | 'zh-CN' | 'ko-KR' | 'ja-JP' | 'es-ES' | 'fr-FR';
 
 const inputModeLabels: Record<InputMode, string> = {
   text: '输入参考文本',
@@ -90,6 +94,16 @@ const inputModeLabels: Record<InputMode, string> = {
   upload: '上传音频文件',
   scenario: '场景对话',
 };
+
+const practiceLanguageOptions: Array<{ value: PracticeLanguage; label: string }> = [
+  { value: 'en-US', label: '英语' },
+  { value: 'zh-CN', label: '中文' },
+  { value: 'ko-KR', label: '韩语' },
+  { value: 'ja-JP', label: '日语' },
+  { value: 'es-ES', label: '西语' },
+  { value: 'fr-FR', label: '法语' },
+  { value: 'auto', label: '自动检测' },
+];
 
 const splitIntoSentences = (text: string): string[] =>
   text
@@ -170,6 +184,24 @@ const buildDiffTokensFromAlignment = (alignment?: AnalysisResult['wordAlignment'
   return diffTokens;
 };
 
+const buildScoredDiffTokens = (wordTiming?: AnalysisResult['wordTiming']): DiffToken[] => {
+  if (!wordTiming) {
+    return [];
+  }
+
+  return wordTiming.words.map((word) => {
+    const type = word.status === 'match' ? 'match' : word.status === 'extra' ? 'extra' : 'missing';
+    return {
+      text: word.expected || word.actual || '(blank)',
+      type,
+      actualText: word.status === 'substituted' ? word.actual : undefined,
+      score: word.score,
+      ipa: word.ipa,
+      note: word.note,
+    };
+  });
+};
+
 const AudioRecorder = () => {
   const { status, startRecording, stopRecording, mediaBlobUrl, clearBlobUrl } =
     useWarmAudioRecorder();
@@ -185,21 +217,25 @@ const AudioRecorder = () => {
   const [lastPracticedSentence, setLastPracticedSentence] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('practice');
   const [resultTab, setResultTab] = useState<ResultTab>('feedback');
-  const [showDiffDetails, setShowDiffDetails] = useState(false);
+  const [showDiffDetails, setShowDiffDetails] = useState(true);
   const [inputMode, setInputMode] = useState<InputMode>('text');
+  const [practiceLanguage, setPracticeLanguage] = useState<PracticeLanguage>('en-US');
   const [isFollowReadingMode, setIsFollowReadingMode] = useState(false);
   const [wordAlignment, setWordAlignment] = useState<AnalysisResult['wordAlignment'] | null>(null);
-  const [debugAudio, setDebugAudio] = useState<ProcessAudioResponse['debugAudio'] | null>(null);
-  const [lastLocalRecordedAudioUrl, setLastLocalRecordedAudioUrl] = useState('');
+  const [wordTiming, setWordTiming] = useState<AnalysisResult['wordTiming'] | null>(null);
 
   const sentences = splitIntoSentences(referenceText);
   const hasSentenceMode = isFollowReadingMode && sentences.length > 0;
   const currentSentence = hasSentenceMode ? sentences[Math.min(currentSentenceIndex, sentences.length - 1)] : '';
   const activePracticeText = currentSentence || referenceText.trim();
-  const comparisonTokens = wordAlignment
+  const scoredComparisonTokens = buildScoredDiffTokens(wordTiming || undefined);
+  const comparisonTokens = scoredComparisonTokens.length > 0
+    ? scoredComparisonTokens
+    : wordAlignment
     ? buildDiffTokensFromAlignment(wordAlignment)
     : (lastPracticedSentence ? buildDiffTokens(lastPracticedSentence, transcription) : []);
   const differenceCount = comparisonTokens.filter((token) => token.type !== 'match').length;
+  const scoredWordCount = comparisonTokens.filter((token) => typeof token.score === 'number').length;
   const hasResult = Boolean(transcription || evaluation || scoring || lastPracticedSentence);
   const canPassCurrentSentence =
     (scoring?.pronunciation_score ?? 0) >= 80 && (scoring?.prosody_score ?? 0) >= 75;
@@ -219,9 +255,9 @@ const AudioRecorder = () => {
     setLastPracticedSentence('');
     setTranscription('');
     setWordAlignment(null);
+    setWordTiming(null);
     setEvaluation(null);
     setScoring(null);
-    setDebugAudio(null);
     setViewMode('practice');
   };
 
@@ -249,7 +285,7 @@ const AudioRecorder = () => {
 
   const resetResultPanel = () => {
     setResultTab('feedback');
-    setShowDiffDetails(false);
+    setShowDiffDetails(true);
   };
 
   const processAudioData = async (audioData: Blob | File, fileName: string) => {
@@ -258,7 +294,7 @@ const AudioRecorder = () => {
     setScoring(null);
     setTranscription('');
     setWordAlignment(null);
-    setDebugAudio(null);
+    setWordTiming(null);
     setViewMode('processing');
     resetResultPanel();
 
@@ -268,6 +304,7 @@ const AudioRecorder = () => {
     try {
       const formData = new FormData();
       formData.append('audio', audioData, fileName);
+      formData.append('language', practiceLanguage);
       if (submittedReferenceText) {
         formData.append('referenceText', submittedReferenceText);
       }
@@ -279,9 +316,9 @@ const AudioRecorder = () => {
       const feedback = data.feedback;
       const nextTranscription = analysis?.transcription || data.transcription || '';
 
-      setDebugAudio(data.debugAudio || null);
       setTranscription(nextTranscription);
       setWordAlignment(analysis?.wordAlignment || null);
+      setWordTiming(analysis?.wordTiming || null);
 
       if (feedback) {
         setEvaluation({
@@ -328,7 +365,6 @@ const AudioRecorder = () => {
   const handleSubmitRecorded = async () => {
     if (!mediaBlobUrl) return;
     const blob = await fetch(mediaBlobUrl).then((r) => r.blob());
-    setLastLocalRecordedAudioUrl(mediaBlobUrl);
     await processAudioData(blob, 'recording.wav');
   };
 
@@ -378,7 +414,7 @@ const AudioRecorder = () => {
     setScoring(null);
     setLastPracticedSentence('');
     setWordAlignment(null);
-    setDebugAudio(null);
+    setWordTiming(null);
     resetResultPanel();
   };
 
@@ -412,6 +448,20 @@ const AudioRecorder = () => {
           <h2>{inputModeLabels[inputMode]}</h2>
         </div>
         <div className="topbar-actions">
+          <label className="language-select">
+            <span>目标语言</span>
+            <select
+              value={practiceLanguage}
+              onChange={(event) => setPracticeLanguage(event.target.value as PracticeLanguage)}
+              disabled={loading || status === 'recording'}
+            >
+              {practiceLanguageOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
           {hasSentenceMode && (
             <div className="progress-pill">
               {currentSentenceIndex + 1} / {sentences.length}
@@ -579,7 +629,7 @@ const AudioRecorder = () => {
 
           {inputMode === 'upload' && (
             <div className="control-card">
-              <h3>上传音频（调试）</h3>
+              <h3>上传音频</h3>
               <div className="upload-box">
                 <input type="file" accept="audio/*" onChange={handleFileUpload} className="file-input" />
               </div>
@@ -598,6 +648,7 @@ const AudioRecorder = () => {
             <ScenarioConversationPanel
               playTts={playCorrectionAudio}
               playingAudio={playingAudio}
+              practiceLanguage={practiceLanguage}
             />
           )}
         </div>
@@ -690,39 +741,6 @@ const AudioRecorder = () => {
         )}
       </div>
 
-      {(lastLocalRecordedAudioUrl || debugAudio?.stages.raw || debugAudio?.stages.preprocessed || debugAudio?.stages.asrInput) && (
-        <div className="comparison-box">
-          <div className="comparison-title">调试音频链路</div>
-          <div className="summary-label">用来判断问题出现在录音采集、后端预处理，还是送入识别前。</div>
-          <div className="feedback-list">
-            {lastLocalRecordedAudioUrl && (
-              <div className="detail-note">
-                <strong>1. 前端刚录完的本地回放</strong>
-                <audio src={lastLocalRecordedAudioUrl} controls className="audio-player" />
-              </div>
-            )}
-            {debugAudio?.stages.raw && (
-              <div className="detail-note">
-                <strong>2. 服务端收到的原始上传音频</strong>
-                <audio src={`http://localhost:3000${debugAudio.stages.raw.url}`} controls className="audio-player" />
-              </div>
-            )}
-            {debugAudio?.stages.preprocessed && (
-              <div className="detail-note">
-                <strong>3. 后端预处理后的音频</strong>
-                <audio src={`http://localhost:3000${debugAudio.stages.preprocessed.url}`} controls className="audio-player" />
-              </div>
-            )}
-            {debugAudio?.stages.asrInput && (
-              <div className="detail-note">
-                <strong>4. 发送给识别模型前的音频</strong>
-                <audio src={`http://localhost:3000${debugAudio.stages.asrInput.url}`} controls className="audio-player" />
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
       {comparisonTokens.length > 0 && (
         <div className="comparison-box">
           <div className="comparison-summary-row">
@@ -730,7 +748,9 @@ const AudioRecorder = () => {
               <div className="comparison-title">文本对比</div>
               <div className="summary-label">
                 {differenceCount > 0 ? `识别结果与目标句存在 ${differenceCount} 处差异` : '识别文本与目标句基本一致'}
+                {scoredWordCount > 0 ? `，已展示 ${scoredWordCount} 个词的评分` : ''}
               </div>
+              {wordTiming?.summary && <div className="summary-label">{wordTiming.summary}</div>}
             </div>
             <button className="btn-outline" onClick={() => setShowDiffDetails((prev) => !prev)}>
               {showDiffDetails ? '收起详情' : '展开详情'}
@@ -743,11 +763,17 @@ const AudioRecorder = () => {
                 <span className="legend-item legend-match">一致</span>
                 <span className="legend-item legend-missing">漏读/错读</span>
                 <span className="legend-item legend-extra">多读/识别偏差</span>
+                {scoredWordCount > 0 && <span className="legend-item legend-score">词后数字为发音评分</span>}
               </div>
               <div className="comparison-tokens">
                 {comparisonTokens.map((token, index) => (
-                  <span key={`${token.text}-${index}`} className={`comparison-token ${token.type}`}>
-                    {token.actualText ? `${token.text} -> ${token.actualText}` : token.text}
+                  <span
+                    key={`${token.text}-${index}`}
+                    className={`comparison-token ${token.type} ${typeof token.score === 'number' ? 'with-score' : ''}`}
+                    title={[token.ipa ? `/${token.ipa}/` : '', token.note || ''].filter(Boolean).join(' | ')}
+                  >
+                    <span>{token.actualText ? `${token.text} -> ${token.actualText}` : token.text}</span>
+                    {typeof token.score === 'number' && <strong>{token.score}</strong>}
                   </span>
                 ))}
               </div>
